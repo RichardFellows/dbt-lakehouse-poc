@@ -1,0 +1,9 @@
+product_id,product_name,category,unit_price,stock_qty
+101,Wireless Headphones,Electronics,79.99,150
+102,Running Shoes,Footwear,59.99,200
+103,Coffee Maker,Kitchen,49.99,80
+104,Yoga Mat,Sports,29.99,300
+105,Mechanical Keyboard,Electronics,129.99,60
+106,Water Bottle,Sports,19.99,500
+107,Desk Lamp,Home Office,39.99,120
+108,Backpack,Accessories,49.99,90

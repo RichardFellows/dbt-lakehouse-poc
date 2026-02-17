@@ -1,0 +1,11 @@
+dbt_duckdb_poc:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: '../output/analytics.duckdb'
+      schema: main
+      threads: 4
+      extensions:
+        - httpfs
+        - parquet

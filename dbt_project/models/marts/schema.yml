@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: orders_enriched
+    description: "Fully joined orders fact table with customer and product details"
+    columns:
+      - name: order_id
+        description: "Primary key"
+        tests:
+          - unique
+          - not_null
+      - name: line_total
+        description: "quantity * unit_price"
+      - name: days_since_signup
+        description: "Days between customer signup and order date"
+
+  - name: orders_enriched_parquet
+    description: "Parquet file export of orders_enriched to output/"

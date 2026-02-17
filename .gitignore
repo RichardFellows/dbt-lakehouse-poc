@@ -1,0 +1,21 @@
+# Virtual environments
+.venv/
+
+# dbt build artifacts
+target/
+dbt_packages/
+logs/
+
+# DuckDB databases (generated)
+*.duckdb
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Output (generated files)
+output/
+
+# dbt user file
+.user.yml

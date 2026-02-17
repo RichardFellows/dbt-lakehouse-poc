@@ -1,0 +1,26 @@
+name: 'dbt_duckdb_poc'
+version: '1.0.0'
+config-version: 2
+
+profile: 'dbt_duckdb_poc'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  dbt_duckdb_poc:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table
+    reporting:
+      +materialized: table
+
+vars:
+  csv_path: "{{ env_var('DBT_CSV_PATH', '../data/csv') }}"
+  output_path: "{{ env_var('DBT_OUTPUT_PATH', '../output') }}"

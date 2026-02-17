@@ -1,0 +1,29 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: "Cleaned customers from CSV"
+    columns:
+      - name: customer_id
+        description: "Primary key"
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_products
+    description: "Cleaned products from CSV"
+    columns:
+      - name: product_id
+        description: "Primary key"
+        tests:
+          - unique
+          - not_null
+
+  - name: stg_orders
+    description: "Cleaned orders from CSV"
+    columns:
+      - name: order_id
+        description: "Primary key"
+        tests:
+          - unique
+          - not_null

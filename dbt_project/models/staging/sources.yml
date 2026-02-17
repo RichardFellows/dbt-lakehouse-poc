@@ -1,0 +1,42 @@
+version: 2
+
+# NOTE: These sources are defined for documentation/lineage purposes.
+# The actual CSV reading is done via read_csv_auto() in each staging model.
+# (dbt-duckdb external sources with format templates require a different config style)
+
+sources:
+  - name: raw_csv
+    description: "Raw CSV files read directly by DuckDB"
+    tables:
+      - name: customers
+        description: "Customer master data"
+        columns:
+          - name: customer_id
+            description: "Primary key"
+          - name: customer_name
+          - name: email
+          - name: country
+          - name: signup_date
+
+      - name: products
+        description: "Product catalogue"
+        columns:
+          - name: product_id
+            description: "Primary key"
+          - name: product_name
+          - name: category
+          - name: unit_price
+          - name: stock_qty
+
+      - name: orders
+        description: "Order transactions"
+        columns:
+          - name: order_id
+            description: "Primary key"
+          - name: customer_id
+            description: "FK to customers"
+          - name: product_id
+            description: "FK to products"
+          - name: quantity
+          - name: order_date
+          - name: status
