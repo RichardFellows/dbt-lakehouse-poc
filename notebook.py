@@ -1,7 +1,7 @@
 import marimo
 
-__generated_with = "0.10.0"
-app = marimo.App(width="medium", app_title="dbt + DuckDB Orders Analysis")
+__generated_with = "0.8.22"
+app = marimo.App(width="full", app_title="dbt + DuckDB Orders Analysis")
 
 
 @app.cell
