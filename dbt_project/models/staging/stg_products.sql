@@ -1,6 +1,6 @@
--- Staging: read products CSV via DuckDB's read_csv_auto
+-- Staging: read products Parquet via DuckDB's read_parquet (fallback: read_csv_auto)
 with source as (
-    select * from read_csv_auto('{{ var("csv_path") }}/products.csv', header=true)
+    select * from read_parquet('{{ var("parquet_path") }}/products.parquet')
 ),
 
 renamed as (

@@ -1,6 +1,6 @@
--- Staging: read orders CSV via DuckDB's read_csv_auto
+-- Staging: read orders Parquet via DuckDB's read_parquet (fallback: read_csv_auto)
 with source as (
-    select * from read_csv_auto('{{ var("csv_path") }}/orders.csv', header=true)
+    select * from read_parquet('{{ var("parquet_path") }}/orders.parquet')
 ),
 
 renamed as (

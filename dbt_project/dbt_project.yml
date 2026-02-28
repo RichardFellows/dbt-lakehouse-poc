@@ -23,4 +23,5 @@ models:
 
 vars:
   csv_path: "{{ env_var('DBT_CSV_PATH', '../data/csv') }}"
+  parquet_path: "{{ env_var('DBT_PARQUET_PATH', '../data/parquet') }}"
   output_path: "{{ env_var('DBT_OUTPUT_PATH', '../output') }}"
