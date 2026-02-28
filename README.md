@@ -1,59 +1,54 @@
-# dbt + DuckDB PoC
+# dbt-lakehouse-poc
 
-A proof-of-concept analytics stack using **dbt** with **DuckDB** as the execution engine, demonstrating a full three-layer transformation pipeline from raw CSV data to reporting-ready tables — with a [Marimo](https://marimo.io) notebook for interactive analysis.
-
----
-
-## What it demonstrates
-
-- **Raw CSV → analytics tables** in a single `dbt run` — no database server required
-- A clean **staging → mart → reporting** layered architecture
-- DuckDB's `read_csv_auto` as a zero-config data source
-- `dbt-duckdb` external materialisation for Parquet export
-- dbt schema tests (`unique`, `not_null`) across all layers
-- Interactive querying of the output database via a Marimo notebook
+A proof-of-concept **lakehouse pipeline** demonstrating the full journey from an operational MSSQL database through columnar storage, analytical transformation, open-table-format cataloguing, and interactive reporting — all with open-source tooling.
 
 ---
 
 ## Architecture
 
 ```
-data/csv/
-├── customers.csv
-├── orders.csv
-└── products.csv
-        │
-        │  DuckDB read_csv_auto
-        ▼
-┌─────────────────────────────────┐
-│         STAGING LAYER           │  (materialized as views)
-│  stg_customers                  │
-│  stg_orders                     │
-│  stg_products                   │
-└───────────────┬─────────────────┘
-                │  3-way join + computed metrics
-                ▼
-┌─────────────────────────────────┐
-│           MART LAYER            │  (materialized as tables)
-│  orders_enriched                │  ← fact table
-│  orders_enriched_parquet        │  ← Parquet export
-└───────────────┬─────────────────┘
-                │  rollups + aggregations
-                ▼
-┌─────────────────────────────────┐
-│        REPORTING LAYER          │  (materialized as tables)
-│  rpt_revenue_by_country         │
-│  rpt_revenue_by_category        │
-│  rpt_customer_summary           │
-│  rpt_product_performance        │
-└─────────────────────────────────┘
-                │
-                ▼
-  output/analytics.duckdb
-  output/orders_enriched.parquet
-        │
-        ▼
-  notebook.py  (Marimo interactive analysis)
+┌─────────────────────────────────────────────────────────────────┐
+│  SOURCE SYSTEM                                                  │
+│  MSSQL 2022  (Docker)                                           │
+│  operational tables: customers, orders, products                │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │  pyodbc + SQLAlchemy
+                            │  pyarrow extraction
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  LANDING ZONE                                                   │
+│  Arrow Parquet files  (data/parquet/)                           │
+│  columnar, compressed, schema-embedded                          │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │  dbt-duckdb reads Parquet natively
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TRANSFORMATION LAYER  (dbt + DuckDB)                           │
+│                                                                 │
+│  STAGING   stg_customers · stg_orders · stg_products            │
+│     │      (views — type casting, column renaming)              │
+│     ▼                                                           │
+│  MARTS     orders_enriched  (fact table — 3-way join)           │
+│     │      orders_enriched_parquet  (Parquet snapshot)          │
+│     ▼                                                           │
+│  REPORTING rpt_revenue_by_country · rpt_revenue_by_category     │
+│            rpt_customer_summary  · rpt_product_performance      │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │  pyiceberg
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  OPEN TABLE FORMAT                                              │
+│  Apache Iceberg  (catalog: SQLite — iceberg/catalog.db)         │
+│  namespace: lakehouse                                           │
+│  tables: reporting layer promoted to Iceberg                    │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  ANALYSIS & REPORTING                                           │
+│  Jupyter Notebook  — queries Iceberg tables via DuckDB          │
+│  matplotlib · plotly visualisations                             │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -61,14 +56,8 @@ data/csv/
 ## Prerequisites
 
 - Python 3.11+
-- `dbt-duckdb` (`pip install dbt-duckdb`)
-- `marimo` (`pip install marimo`)
-
-Or install everything at once:
-
-```bash
-pip install -r requirements.txt
-```
+- Docker + Docker Compose (for MSSQL source)
+- ODBC Driver 18 for SQL Server (`msodbcsql18`)
 
 ---
 
@@ -79,93 +68,74 @@ pip install -r requirements.txt
 git clone https://gitlab.com/richard-fellows/dbt-duckdb-poc.git
 cd dbt-duckdb-poc
 
-# 2. Create a virtual environment and install dependencies
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+# 2. Set up Python environment
+make setup
+source .venv/bin/activate
 
-# 3. Run the dbt pipeline
+# 3. Configure environment variables
+cp .env.example .env
+# Edit .env if you need a different SA password
+
+# 4. Start MSSQL
+make docker-up
+
+# 5. Run the dbt pipeline
 cd dbt_project
 dbt run --profiles-dir .
-
-# 4. Run dbt tests
 dbt test --profiles-dir .
-
-# 5. Open the notebook
 cd ..
-marimo edit notebook.py
-```
 
-The notebook connects directly to `output/analytics.duckdb` and queries the reporting tables.
+# 6. Open the notebook
+jupyter notebook
+```
 
 ---
 
 ## Project Structure
 
 ```
-dbt-duckdb-poc/
+dbt-lakehouse-poc/
 ├── data/
-│   └── csv/
-│       ├── customers.csv        # 10 sample customers
-│       ├── orders.csv           # 30 sample orders
-│       └── products.csv         # 10 products across 4 categories
+│   ├── csv/                         # Original sample CSV files
+│   │   ├── customers.csv
+│   │   ├── orders.csv
+│   │   └── products.csv
+│   └── parquet/                     # Extracted Arrow Parquet files (gitignored)
 │
 ├── dbt_project/
-│   ├── dbt_project.yml          # Project config + materialisation settings
-│   ├── profiles.yml             # DuckDB connection profile
+│   ├── dbt_project.yml
+│   ├── profiles.yml
 │   └── models/
-│       ├── staging/
-│       │   ├── sources.yml
-│       │   ├── schema.yml
-│       │   ├── stg_customers.sql
-│       │   ├── stg_orders.sql
-│       │   └── stg_products.sql
-│       ├── marts/
-│       │   ├── schema.yml
-│       │   ├── orders_enriched.sql
-│       │   └── orders_enriched_parquet.sql
-│       └── reporting/
-│           ├── schema.yml
-│           ├── rpt_revenue_by_country.sql
-│           ├── rpt_revenue_by_category.sql
-│           ├── rpt_customer_summary.sql
-│           └── rpt_product_performance.sql
+│       ├── staging/                 # Views: type-cast raw sources
+│       ├── marts/                   # Tables: enriched fact table + Parquet export
+│       └── reporting/               # Tables: pre-aggregated reporting models
 │
-├── notebook.py                  # Marimo interactive notebook
+├── iceberg/                         # Iceberg catalog (gitignored)
+│   └── catalog.db                   # SQLite-backed Iceberg catalog
+│
+├── output/                          # DuckDB database + ad-hoc Parquet exports (gitignored)
+│   ├── analytics.duckdb
+│   └── orders_enriched.parquet
+│
+├── notebook.py                      # Marimo interactive notebook (legacy)
+├── docker-compose.yml               # MSSQL 2022 service
+├── .env.example                     # Environment variable template
 ├── requirements.txt
+├── pyproject.toml
+├── Makefile
 └── README.md
 ```
 
 ---
 
-## Layer Descriptions
+## Makefile Targets
 
-### Staging
-Raw CSV files are ingested using DuckDB's `read_csv_auto`. Each staging model casts columns to appropriate types and renames them for consistency. Staged as **views** (no data duplication).
-
-### Marts
-`orders_enriched` joins all three staging models into a single fact table with computed metrics (`line_total`, `days_since_signup`, `order_month`, `order_year`). An external materialisation also exports a Parquet snapshot to `output/`.
-
-### Reporting
-Pre-aggregated tables ready for dashboards or direct analysis:
-
-| Model | Description |
-|-------|-------------|
-| `rpt_revenue_by_country` | Monthly revenue rollup by customer country |
-| `rpt_revenue_by_category` | Product category totals — revenue, units, avg order value |
-| `rpt_customer_summary` | Lifetime metrics per customer — orders, spend, first/last date |
-| `rpt_product_performance` | Sales performance per product including current stock remaining |
-
----
-
-## Running Tests
-
-```bash
-cd dbt_project
-dbt test --profiles-dir .
-```
-
-26 tests covering `unique` and `not_null` constraints across all layers.
+| Target | Description |
+|--------|-------------|
+| `make setup` | Create `.venv` and install all dependencies |
+| `make docker-up` | Start MSSQL container (requires `.env`) |
+| `make docker-down` | Stop and remove containers |
+| `make clean` | Remove `.venv`, `output/`, caches |
 
 ---
 
@@ -173,7 +143,12 @@ dbt test --profiles-dir .
 
 | Tool | Role |
 |------|------|
+| [MSSQL 2022](https://www.microsoft.com/sql-server) | Source operational database |
+| [pyodbc](https://github.com/mkleehammer/pyodbc) + [SQLAlchemy](https://www.sqlalchemy.org) | MSSQL connection & extraction |
+| [PyArrow](https://arrow.apache.org/docs/python/) | In-memory columnar format + Parquet I/O |
 | [DuckDB](https://duckdb.org) | In-process analytical SQL engine |
-| [dbt-core](https://docs.getdbt.com) | Transformation framework |
-| [dbt-duckdb](https://github.com/duckdb/dbt-duckdb) | DuckDB adapter for dbt |
-| [Marimo](https://marimo.io) | Reactive Python notebook |
+| [dbt-core](https://docs.getdbt.com) + [dbt-duckdb](https://github.com/duckdb/dbt-duckdb) | Transformation framework |
+| [Apache Iceberg](https://iceberg.apache.org) + [pyiceberg](https://py.iceberg.apache.org) | Open table format & catalog |
+| [Jupyter](https://jupyter.org) | Interactive analysis notebooks |
+| [matplotlib](https://matplotlib.org) + [plotly](https://plotly.com/python/) | Visualisation |
+| [Marimo](https://marimo.io) | Reactive notebook (legacy PoC) |

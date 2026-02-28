@@ -1,21 +1,42 @@
-# Virtual environments
+# Virtual environment
 .venv/
 
+# Pipeline outputs
+output/
+data/parquet/
+iceberg/
+
 # dbt build artifacts
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
 target/
-dbt_packages/
 logs/
+dbt_packages/
+.user.yml
 
 # DuckDB databases (generated)
 *.duckdb
 
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
 
-# Output (generated files)
-output/
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
 
-# dbt user file
-.user.yml
+# Environment secrets
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
