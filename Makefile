@@ -1,4 +1,4 @@
-.PHONY: setup docker-up docker-down seed clean
+.PHONY: setup extract docker-up docker-down seed clean
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -10,6 +10,15 @@ setup:
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 	@echo "✓ Environment ready. Activate with: source $(VENV)/bin/activate"
+
+## extract: pull all tables from MSSQL and write to data/parquet/ (requires .env)
+extract:
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env not found. Copy .env.example to .env and fill in values."; \
+		exit 1; \
+	fi
+	$(PYTHON) extract.py
+	@echo "✓ Parquet files written to data/parquet/"
 
 ## docker-up: start MSSQL container (requires .env)
 docker-up:
