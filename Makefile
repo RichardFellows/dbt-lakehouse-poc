@@ -1,4 +1,4 @@
-.PHONY: setup docker-up docker-down clean
+.PHONY: setup docker-up docker-down seed clean
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -20,6 +20,16 @@ docker-up:
 	docker compose up -d
 	@echo "✓ MSSQL container started. Waiting for healthcheck..."
 	docker compose ps
+
+## seed: wait for MSSQL to be healthy, then load init-db.sql
+seed:
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env not found. Copy .env.example to .env and fill in values."; \
+		exit 1; \
+	fi
+	SA_PASSWORD=$$(grep '^SA_PASSWORD=' .env | cut -d= -f2-) \
+		bash scripts/seed.sh
+	@echo "✓ Database seeded."
 
 ## docker-down: stop and remove containers
 docker-down:
