@@ -1,4 +1,4 @@
-.PHONY: setup extract docker-up docker-down seed load-iceberg clean
+.PHONY: setup extract docker-up docker-down seed load-iceberg notebook clean
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -49,6 +49,10 @@ docker-down:
 load-iceberg:
 	$(PYTHON) iceberg_output.py
 	@echo "✓ Iceberg tables written to output/iceberg/"
+
+## notebook: launch Jupyter notebook for Iceberg analytics
+notebook:
+	$(PYTHON) -m jupyter notebook notebook.ipynb
 
 ## clean: remove virtual environment, output files, and caches
 clean:
