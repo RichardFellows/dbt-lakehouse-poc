@@ -1,8 +1,9 @@
-.PHONY: setup extract docker-up docker-down seed load-iceberg notebook clean
+.PHONY: setup docker-up seed extract transform load-iceberg notebook all ci test clean docker-down
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
+DBT := cd dbt_project &&
 
 ## setup: create virtual environment and install all dependencies
 setup:
@@ -10,15 +11,6 @@ setup:
 	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 	@echo "✓ Environment ready. Activate with: source $(VENV)/bin/activate"
-
-## extract: pull all tables from MSSQL and write to data/parquet/ (requires .env)
-extract:
-	@if [ ! -f .env ]; then \
-		echo "ERROR: .env not found. Copy .env.example to .env and fill in values."; \
-		exit 1; \
-	fi
-	$(PYTHON) extract.py
-	@echo "✓ Parquet files written to data/parquet/"
 
 ## docker-up: start MSSQL container (requires .env)
 docker-up:
@@ -40,10 +32,24 @@ seed:
 		bash scripts/seed.sh
 	@echo "✓ Database seeded."
 
-## docker-down: stop and remove containers
-docker-down:
-	docker compose down
-	@echo "✓ Containers stopped."
+## extract: pull all tables from MSSQL and write to data/parquet/ (requires .env)
+extract:
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env not found. Copy .env.example to .env and fill in values."; \
+		exit 1; \
+	fi
+	$(PYTHON) extract.py
+	@echo "✓ Parquet files written to data/parquet/"
+
+## transform: run dbt models
+transform:
+	$(DBT) dbt run --profiles-dir .
+	@echo "✓ dbt models materialised."
+
+## test: run dbt tests
+test:
+	$(DBT) dbt test --profiles-dir .
+	@echo "✓ dbt tests passed."
 
 ## load-iceberg: export dbt output tables to Iceberg format
 load-iceberg:
@@ -54,6 +60,14 @@ load-iceberg:
 notebook:
 	$(PYTHON) -m jupyter notebook notebook.ipynb
 
+## all: run the full pipeline end-to-end
+all: setup docker-up seed extract transform load-iceberg
+	@echo "✓ Full pipeline complete. Run 'make notebook' to explore results."
+
+## ci: CI-friendly pipeline (assumes MSSQL already running and seeded)
+ci: extract transform test
+	@echo "✓ CI pipeline passed."
+
 ## clean: remove virtual environment, output files, and caches
 clean:
 	rm -rf $(VENV)
@@ -62,3 +76,8 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name ".ipynb_checkpoints" -exec rm -rf {} + 2>/dev/null || true
 	@echo "✓ Clean complete."
+
+## docker-down: stop and remove containers
+docker-down:
+	docker compose down
+	@echo "✓ Containers stopped."
