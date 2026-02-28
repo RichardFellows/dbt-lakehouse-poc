@@ -1,4 +1,4 @@
-.PHONY: setup extract docker-up docker-down seed clean
+.PHONY: setup extract docker-up docker-down seed load-iceberg clean
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -44,6 +44,11 @@ seed:
 docker-down:
 	docker compose down
 	@echo "✓ Containers stopped."
+
+## load-iceberg: export dbt output tables to Iceberg format
+load-iceberg:
+	$(PYTHON) iceberg_output.py
+	@echo "✓ Iceberg tables written to output/iceberg/"
 
 ## clean: remove virtual environment, output files, and caches
 clean:
