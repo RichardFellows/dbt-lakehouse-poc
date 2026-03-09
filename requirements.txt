@@ -5,7 +5,7 @@ pandas>=2.0.0
 pyarrow>=14.0.0
 # Lakehouse pipeline additions
 pyodbc>=5.0.0
-pyiceberg[sql-sqlite]>=0.7.0
+pyiceberg[rest]>=0.7.0
 jupyter>=1.0.0
 sqlalchemy>=2.0.0
 matplotlib>=3.8.0

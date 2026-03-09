@@ -1,4 +1,4 @@
-.PHONY: setup docker-up seed extract transform load-iceberg notebook all ci test clean docker-down
+.PHONY: setup docker-up nessie-wait seed extract transform load-iceberg notebook all ci test clean docker-down
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -12,15 +12,25 @@ setup:
 	$(PIP) install -r requirements.txt
 	@echo "✓ Environment ready. Activate with: source $(VENV)/bin/activate"
 
-## docker-up: start MSSQL container (requires .env)
+## docker-up: start MSSQL and Nessie containers (requires .env)
 docker-up:
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found. Copy .env.example to .env and fill in values."; \
 		exit 1; \
 	fi
 	docker compose up -d
-	@echo "✓ MSSQL container started. Waiting for healthcheck..."
+	@echo "✓ MSSQL + Nessie containers started. Waiting for healthchecks..."
 	docker compose ps
+
+## nessie-wait: block until the Nessie catalog API is reachable
+nessie-wait:
+	@echo "Waiting for Nessie catalog at http://localhost:19120 …"
+	@for i in $$(seq 1 30); do \
+		curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1 && echo "✓ Nessie is ready." && exit 0; \
+		echo "  attempt $$i/30 — retrying in 2s …"; \
+		sleep 2; \
+	done; \
+	echo "ERROR: Nessie did not become ready in time."; exit 1
 
 ## seed: wait for MSSQL to be healthy, then load init-db.sql
 seed:
@@ -51,17 +61,17 @@ test:
 	$(DBT) dbt test --profiles-dir .
 	@echo "✓ dbt tests passed."
 
-## load-iceberg: export dbt output tables to Iceberg format
-load-iceberg:
+## load-iceberg: export dbt output tables to Iceberg via Nessie REST catalog
+load-iceberg: nessie-wait
 	$(PYTHON) iceberg_output.py
-	@echo "✓ Iceberg tables written to output/iceberg/"
+	@echo "✓ Iceberg tables written to output/iceberg/ (catalogued in Nessie)"
 
 ## notebook: launch Jupyter notebook for Iceberg analytics
 notebook:
 	$(PYTHON) -m jupyter notebook notebook.ipynb
 
 ## all: run the full pipeline end-to-end
-all: setup docker-up seed extract transform load-iceberg
+all: setup docker-up nessie-wait seed extract transform load-iceberg
 	@echo "✓ Full pipeline complete. Run 'make notebook' to explore results."
 
 ## ci: CI-friendly pipeline (assumes MSSQL already running and seeded)

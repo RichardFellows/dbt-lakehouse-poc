@@ -26,12 +26,13 @@ A proof-of-concept **lakehouse pipeline** demonstrating the full journey from an
                         ┌──────────────────┐    ┌──────────────────┐
                         │  DuckDB queries  │<───│  pyiceberg        │
                         │  matplotlib      │    │  → Iceberg tables │
-                        │  plotly          │    │  (SQLite catalog) │
+                        │  plotly          │    │  (Nessie catalog) │
                         └──────────────────┘    └──────────────────┘
-                                                 output/iceberg/
+                                                 Nessie REST catalog
+                                                 :19120  (Docker)
 ```
 
-**Data flow:** MSSQL → `extract.py` → Parquet → dbt/DuckDB → Iceberg → Jupyter
+**Data flow:** MSSQL → `extract.py` → Parquet → dbt/DuckDB → Iceberg (Nessie) → Jupyter
 
 ---
 
@@ -118,12 +119,12 @@ dbt-lakehouse-poc/
 │   └── seed.sh                      # Wait-for-healthy + run SQL script
 │
 ├── output/                          # Generated artifacts (gitignored)
-│   └── iceberg/                     # Iceberg tables + SQLite catalog
+│   └── iceberg/                     # Iceberg data files (warehouse)
 │
 ├── extract.py                       # MSSQL → Arrow Parquet extraction
-├── iceberg_output.py                # DuckDB → Iceberg export
+├── iceberg_output.py                # DuckDB → Iceberg export (via Nessie)
 ├── notebook.ipynb                   # Jupyter notebook — Iceberg analytics
-├── docker-compose.yml               # MSSQL 2022 service definition
+├── docker-compose.yml               # MSSQL 2022 + Nessie catalog services
 ├── .env.example                     # Environment variable template
 ├── requirements.txt
 ├── pyproject.toml
@@ -143,9 +144,18 @@ DuckDB is an in-process analytical database — no server to manage. It reads Pa
 
 Parquet provides a clean handoff boundary between extraction and transformation. The `extract.py` step writes schema-embedded, compressed columnar files that any tool in the ecosystem can read (DuckDB, Spark, Pandas, Polars). This decouples the source system from the transformation layer — dbt never connects to MSSQL.
 
-### Why Apache Iceberg?
+### Why Apache Iceberg + Nessie?
 
-Iceberg adds table-level semantics on top of Parquet: ACID transactions, schema evolution, time travel, and partition pruning. Using pyiceberg with a lightweight SQLite catalog demonstrates the open table format pattern without requiring a cloud catalog service (AWS Glue, Hive Metastore). The Jupyter notebook reads Iceberg tables directly via DuckDB's `iceberg_scan()`, proving the format works end-to-end.
+Iceberg adds table-level semantics on top of Parquet: ACID transactions, schema evolution, time travel, and partition pruning. The previous SQLite-backed catalog worked for single-process local dev but couldn't demonstrate the multi-engine, catalog-as-a-service pattern that makes Iceberg compelling in a real lakehouse.
+
+[Apache Nessie](https://projectnessie.org) is the lightest-weight option that shows the full pattern:
+
+- **REST catalog** — standard Iceberg REST spec; DuckDB, Spark, and Trino can all connect to the same catalog
+- **Git-like branching** — create isolated branches for schema experiments without affecting `main`
+- **Schema evolution tracking** — every DDL change is versioned alongside the data
+- **Single Docker container** — `ghcr.io/projectnessie/nessie` with an in-memory store for local dev; swap to JDBC-backed store for production
+
+The Jupyter notebook reads Iceberg tables via PyIceberg's `RestCatalog`, proving the open-catalog pattern works end-to-end on a laptop.
 
 ---
 
@@ -158,6 +168,7 @@ Iceberg adds table-level semantics on top of Parquet: ACID transactions, schema 
 | [PyArrow](https://arrow.apache.org/docs/python/) | In-memory columnar format + Parquet I/O |
 | [DuckDB](https://duckdb.org) | In-process analytical SQL engine |
 | [dbt-core](https://docs.getdbt.com) + [dbt-duckdb](https://github.com/duckdb/dbt-duckdb) | Transformation framework |
-| [Apache Iceberg](https://iceberg.apache.org) + [pyiceberg](https://py.iceberg.apache.org) | Open table format & catalog |
+| [Apache Iceberg](https://iceberg.apache.org) + [pyiceberg](https://py.iceberg.apache.org) | Open table format |
+| [Apache Nessie](https://projectnessie.org) | REST catalog — Git-like branching & multi-engine access |
 | [Jupyter](https://jupyter.org) | Interactive analysis notebooks |
 | [matplotlib](https://matplotlib.org) + [plotly](https://plotly.com/python/) | Visualisation |
