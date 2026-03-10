@@ -41,7 +41,11 @@ jobs:
           sed -i 's/^[[:space:]]*//' .env
 
       - name: Start services (MSSQL + Nessie)
-        run: docker compose up -d --force-recreate
+        run: |
+          # Remove any pre-existing containers with conflicting names
+          # (may exist from manual docker-compose runs in different directories)
+          docker rm -f lakehouse-mssql lakehouse-nessie 2>/dev/null || true
+          docker compose up -d
 
       - name: Wait for MSSQL to be healthy
         run: |
