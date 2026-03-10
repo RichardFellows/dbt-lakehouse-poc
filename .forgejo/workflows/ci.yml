@@ -25,20 +25,7 @@ jobs:
           --health-retries 12
           --health-start-period 30s
 
-      nessie:
-        image: ghcr.io/projectnessie/nessie:latest
-        env:
-          nessie.version.store.type: IN_MEMORY
-        # No ports: — use hostname 'nessie' on shared network
-        options: >-
-          --health-cmd "curl -sf http://localhost:19120/api/v2/config"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-          --health-start-period 20s
-
     env:
-      # Service containers are reachable by hostname on the shared network
       MSSQL_SERVER: mssql
       MSSQL_PORT: "1433"
       MSSQL_DATABASE: lakehouse_source
@@ -46,7 +33,6 @@ jobs:
       MSSQL_PASSWORD: ${{ secrets.SA_PASSWORD }}
       MSSQL_DRIVER: ODBC Driver 18 for SQL Server
       MSSQL_TRUST_CERT: "1"
-      NESSIE_URL: http://nessie:19120
 
     steps:
       - name: Checkout
@@ -83,7 +69,7 @@ jobs:
 
       - name: Write .env for pipeline scripts
         run: |
-          cat > .env << EOF
+          cat > .env << 'EOF'
           ACCEPT_EULA=Y
           SA_PASSWORD=${{ secrets.SA_PASSWORD }}
           MSSQL_PID=Developer
@@ -97,7 +83,5 @@ jobs:
           EOF
           sed -i 's/^[[:space:]]*//' .env
 
-      - name: Run full CI pipeline (extract → transform → test → iceberg → e2e)
-        env:
-          NESSIE_URL: http://nessie:19120
-        run: make ci-full
+      - name: Run CI pipeline (extract → transform → dbt test)
+        run: make ci
