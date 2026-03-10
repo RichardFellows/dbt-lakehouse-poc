@@ -53,6 +53,7 @@ extract:
 
 ## transform: run dbt models
 transform:
+	@mkdir -p output data/parquet
 	$(DBT) dbt run --profiles-dir .
 	@echo "✓ dbt models materialised."
 
