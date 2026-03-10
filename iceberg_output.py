@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # ── defaults ────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = PROJECT_ROOT / "output" / "analytics.duckdb"
-DEFAULT_WAREHOUSE = str(PROJECT_ROOT / "output" / "iceberg" / "warehouse")
+DEFAULT_WAREHOUSE = "warehouse"  # Must match nessie.catalog.default-warehouse
 DEFAULT_NESSIE_URL = os.environ.get("NESSIE_URL", "http://localhost:19120")
 DEFAULT_NAMESPACE = "default"
 
@@ -58,15 +58,22 @@ def setup_catalog(nessie_url: str, warehouse: str) -> RestCatalog:
     """Connect to the Nessie REST catalog.
 
     Nessie exposes the Iceberg REST spec at ``<url>/iceberg``.  We point
-    PyIceberg's ``RestCatalog`` at that endpoint and use the local
-    filesystem as the warehouse (where data files are written).
-    """
-    Path(warehouse).mkdir(parents=True, exist_ok=True)
+    PyIceberg's ``RestCatalog`` at that endpoint.
 
+    The ``warehouse`` parameter sent to Nessie must match one of its
+    configured warehouse names (e.g. ``warehouse``).  Nessie pushes
+    object-store config (S3 credentials, region, endpoint) back to
+    PyIceberg via the REST config response — no client-side S3 config
+    needed.
+
+    For local dev (Docker Compose), Nessie + MinIO run together and
+    ``warehouse`` defaults to the Nessie-configured name.
+    """
     catalog = RestCatalog(
         "lakehouse",
         **{
             "uri": f"{nessie_url.rstrip('/')}/iceberg",
+            # Must match a warehouse name configured in Nessie server.
             "warehouse": warehouse,
             # Nessie maps each Iceberg REST "prefix" to a branch;
             # "main" is the default branch name.
@@ -98,7 +105,13 @@ def write_iceberg_table(
     table_name: str,
     arrow_table: pa.Table,
 ) -> None:
-    """Write a PyArrow table as an Iceberg table, overwriting if it exists."""
+    """Write a PyArrow table as an Iceberg table, overwriting if it exists.
+
+    The table location is derived by Nessie from the warehouse config —
+    no client-side location override needed.  Data files land wherever
+    the warehouse is configured to point (S3/MinIO in CI, or S3/MinIO
+    locally via Docker Compose).
+    """
     identifier = f"{DEFAULT_NAMESPACE}.{table_name}"
 
     try:
@@ -107,40 +120,29 @@ def write_iceberg_table(
     except NoSuchTableError:
         pass
 
-    iceberg_table = catalog.create_table(identifier, schema=arrow_table.schema)
+    iceberg_table = catalog.create_table(
+        identifier,
+        schema=arrow_table.schema,
+    )
     iceberg_table.overwrite(arrow_table)
     logger.debug("Wrote %d rows to '%s'", len(arrow_table), identifier)
 
 
 def verify_iceberg_table(
-    warehouse: str,
+    catalog: RestCatalog,
     table_name: str,
 ) -> int:
-    """Read an Iceberg table back via DuckDB iceberg_scan and return row count."""
-    metadata_path = (
-        Path(warehouse)
-        / DEFAULT_NAMESPACE
-        / table_name
-        / "metadata"
-    )
-    # Find the latest metadata JSON file
-    metadata_files = sorted(metadata_path.glob("*.metadata.json"))
-    if not metadata_files:
-        raise FileNotFoundError(
-            f"No metadata file found for table '{table_name}' in {metadata_path}"
-        )
-    latest_metadata = metadata_files[-1]
+    """Read an Iceberg table back via PyIceberg and return row count.
 
-    con = duckdb.connect()
-    try:
-        con.install_extension("iceberg")
-        con.load_extension("iceberg")
-        result = con.execute(
-            f"SELECT count(*) FROM iceberg_scan('{latest_metadata}')"
-        ).fetchone()
-        return result[0]
-    finally:
-        con.close()
+    Uses the catalog to load the table and scan it — works regardless
+    of whether the data lives on local filesystem or S3/MinIO.
+    """
+    identifier = f"{DEFAULT_NAMESPACE}.{table_name}"
+    table = catalog.load_table(identifier)
+    # Use to_arrow() to read the full table via the catalog's FileIO
+    scan = table.scan()
+    arrow_table = scan.to_arrow()
+    return len(arrow_table)
 
 
 # ── main ────────────────────────────────────────────────────────────
@@ -161,8 +163,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--warehouse",
-        default=DEFAULT_WAREHOUSE,
-        help=f"Local filesystem warehouse path for data files (default: {DEFAULT_WAREHOUSE})",
+        default="warehouse",
+        help="Nessie warehouse name (must match server config, default: warehouse)",
     )
     parser.add_argument(
         "--tables",
@@ -211,8 +213,8 @@ def main() -> None:
         logger.info("Writing '%s' to Iceberg (%d rows) …", table_name, row_count)
         write_iceberg_table(catalog, table_name, arrow_table)
 
-        # 3. Verify round-trip via DuckDB iceberg_scan
-        verified_count = verify_iceberg_table(args.warehouse, table_name)
+        # 3. Verify round-trip via catalog scan
+        verified_count = verify_iceberg_table(catalog, table_name)
         elapsed = time.perf_counter() - t0
 
         if verified_count != row_count:

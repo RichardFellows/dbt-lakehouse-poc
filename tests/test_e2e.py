@@ -23,6 +23,7 @@ from pathlib import Path
 import duckdb
 import pyarrow.parquet as pq
 import pytest
+from pyiceberg.catalog.rest import RestCatalog
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -33,7 +34,6 @@ PARQUET_DIR = PROJECT_ROOT / "data" / "parquet"
 DBT_DIR = PROJECT_ROOT / "dbt_project"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 DUCKDB_PATH = PROJECT_ROOT / "output" / "analytics.duckdb"
-ICEBERG_WAREHOUSE = OUTPUT_DIR / "iceberg" / "warehouse"
 NESSIE_URL = os.environ.get("NESSIE_URL", "http://localhost:19120")
 NOTEBOOK_PATH = PROJECT_ROOT / "notebook.ipynb"
 
@@ -95,12 +95,14 @@ def _nessie_url() -> str:
     return NESSIE_URL.rstrip("/")
 
 
-def _latest_metadata(table_name: str) -> Path:
-    """Return the path to the latest Iceberg metadata JSON for *table_name*."""
-    meta_dir = ICEBERG_WAREHOUSE / "default" / table_name / "metadata"
-    files = sorted(meta_dir.glob("*.metadata.json"))
-    assert files, f"No metadata files found in {meta_dir}"
-    return files[-1]
+def _iceberg_catalog() -> RestCatalog:
+    """Create a PyIceberg REST catalog connected to Nessie."""
+    return RestCatalog(
+        "lakehouse",
+        uri=f"{_nessie_url()}/iceberg",
+        warehouse="warehouse",
+        prefix="main",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +112,11 @@ def _latest_metadata(table_name: str) -> Path:
 class TestInfrastructure:
     """Verify Docker services are reachable before running the pipeline."""
 
+    @pytest.mark.skipif(
+        os.environ.get("CI") == "true",
+        reason="In CI, MSSQL health is guaranteed by the service container healthcheck; "
+               "docker inspect by local container name is not available.",
+    )
     def test_mssql_reachable(self):
         """MSSQL container should be healthy (docker inspect)."""
         result = _run(
@@ -238,8 +245,9 @@ class TestDbtTransform:
             f"STDOUT:\n{result.stdout}\n"
             f"STDERR:\n{result.stderr}"
         )
-        # Check that no model reported an error in the output
-        assert "ERROR" not in result.stdout or "0 errors" in result.stdout, (
+        # Check that no model reported an error in the output.
+        # dbt's summary line contains "ERROR=0" which is not an actual error.
+        assert "ERROR" not in result.stdout or "ERROR=0" in result.stdout, (
             f"dbt reported model errors:\n{result.stdout}"
         )
 
@@ -372,32 +380,18 @@ class TestIcebergLoad:
             f"STDERR:\n{result.stderr}"
         )
 
-    def test_iceberg_metadata_files_exist(self):
-        """Each Iceberg table must have at least one metadata.json file."""
+    def test_iceberg_tables_exist_in_catalog(self):
+        """Each Iceberg table must exist in the Nessie catalog."""
+        catalog = _iceberg_catalog()
+        existing = {name for _, name in catalog.list_tables("default")}
         for table in ICEBERG_TABLES:
-            meta_dir = ICEBERG_WAREHOUSE / "default" / table / "metadata"
-            assert meta_dir.exists(), (
-                f"Iceberg metadata directory not found: {meta_dir}"
-            )
-            metadata_files = list(meta_dir.glob("*.metadata.json"))
-            assert metadata_files, (
-                f"No metadata JSON files found for table '{table}' in {meta_dir}"
-            )
-
-    def test_iceberg_data_files_exist(self):
-        """Each Iceberg table must have at least one data (Parquet) file."""
-        for table in ICEBERG_TABLES:
-            data_dir = ICEBERG_WAREHOUSE / "default" / table / "data"
-            assert data_dir.exists(), (
-                f"Iceberg data directory not found: {data_dir}"
-            )
-            data_files = list(data_dir.glob("*.parquet"))
-            assert data_files, (
-                f"No Parquet data files found for table '{table}' in {data_dir}"
+            assert table in existing, (
+                f"Table 'default.{table}' not found in Nessie catalog. "
+                f"Existing tables: {existing}"
             )
 
     def test_iceberg_round_trip_row_counts(self):
-        """Row counts from DuckDB iceberg_scan must match dbt output table counts."""
+        """Row counts from catalog scan must match dbt output table counts."""
         # Get expected counts from DuckDB
         con_db = duckdb.connect(str(DUCKDB_PATH), read_only=True)
         expected_counts: dict[str, int] = {}
@@ -408,24 +402,16 @@ class TestIcebergLoad:
         finally:
             con_db.close()
 
-        # Verify each table via iceberg_scan
-        con_ice = duckdb.connect()
-        con_ice.install_extension("iceberg")
-        con_ice.load_extension("iceberg")
-        try:
-            for table in ICEBERG_TABLES:
-                metadata_file = _latest_metadata(table)
-                result = con_ice.execute(
-                    f"SELECT COUNT(*) FROM iceberg_scan('{metadata_file}')"
-                ).fetchone()
-                actual_count = result[0]
-                expected = expected_counts[table]
-                assert actual_count == expected, (
-                    f"Iceberg round-trip mismatch for '{table}': "
-                    f"DuckDB had {expected} rows, iceberg_scan returned {actual_count}"
-                )
-        finally:
-            con_ice.close()
+        # Verify each table via PyIceberg catalog scan
+        catalog = _iceberg_catalog()
+        for table in ICEBERG_TABLES:
+            iceberg_table = catalog.load_table(f"default.{table}")
+            actual_count = len(iceberg_table.scan().to_arrow())
+            expected = expected_counts[table]
+            assert actual_count == expected, (
+                f"Iceberg round-trip mismatch for '{table}': "
+                f"DuckDB had {expected} rows, catalog scan returned {actual_count}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -433,102 +419,90 @@ class TestIcebergLoad:
 # ---------------------------------------------------------------------------
 
 class TestIcebergDataIntegrity:
-    """Query Iceberg tables via DuckDB iceberg_scan and assert data invariants."""
+    """Query Iceberg tables via PyIceberg catalog and assert data invariants."""
 
     @pytest.fixture(scope="class")
-    def ice_con(self):
-        con = duckdb.connect()
-        con.install_extension("iceberg")
-        con.load_extension("iceberg")
-        yield con
-        con.close()
+    def catalog(self):
+        return _iceberg_catalog()
 
-    def _scan(self, con: duckdb.DuckDBPyConnection, table: str, query_suffix: str = "") -> list:
-        metadata_file = _latest_metadata(table)
-        sql = f"SELECT * FROM iceberg_scan('{metadata_file}'){query_suffix}"
-        return con.execute(sql).fetchall()
+    def _load_df(self, catalog: RestCatalog, table: str):
+        """Load an Iceberg table as a pandas DataFrame."""
+        return catalog.load_table(f"default.{table}").scan().to_pandas()
 
-    def _count(self, con: duckdb.DuckDBPyConnection, table: str, where: str = "") -> int:
-        metadata_file = _latest_metadata(table)
-        where_clause = f" WHERE {where}" if where else ""
-        sql = f"SELECT COUNT(*) FROM iceberg_scan('{metadata_file}'){where_clause}"
-        return con.execute(sql).fetchone()[0]
-
-    def test_orders_enriched_no_null_pks(self, ice_con):
+    def test_orders_enriched_no_null_pks(self, catalog):
         """orders_enriched Iceberg table: no null order_ids."""
-        nulls = self._count(ice_con, "orders_enriched", "order_id IS NULL")
+        df = self._load_df(catalog, "orders_enriched")
+        nulls = df["order_id"].isna().sum()
         assert nulls == 0, f"orders_enriched (Iceberg): {nulls} null order_id(s)"
 
-    def test_orders_enriched_revenue_positive(self, ice_con):
+    def test_orders_enriched_revenue_positive(self, catalog):
         """orders_enriched Iceberg table: all line_totals > 0."""
-        bad = self._count(ice_con, "orders_enriched", "line_total <= 0 OR line_total IS NULL")
+        df = self._load_df(catalog, "orders_enriched")
+        bad = ((df["line_total"] <= 0) | df["line_total"].isna()).sum()
         assert bad == 0, f"orders_enriched (Iceberg): {bad} row(s) with line_total <= 0"
 
-    def test_orders_enriched_fk_not_null(self, ice_con):
+    def test_orders_enriched_fk_not_null(self, catalog):
         """orders_enriched Iceberg table: customer_id and product_id not null."""
-        bad = self._count(
-            ice_con, "orders_enriched",
-            "customer_id IS NULL OR product_id IS NULL"
-        )
+        df = self._load_df(catalog, "orders_enriched")
+        bad = (df["customer_id"].isna() | df["product_id"].isna()).sum()
         assert bad == 0, f"orders_enriched (Iceberg): {bad} orphaned FK row(s)"
 
-    def test_orders_enriched_expected_row_count(self, ice_con):
+    def test_orders_enriched_expected_row_count(self, catalog):
         """orders_enriched Iceberg table: exactly 18 rows (one per seed order)."""
-        count = self._count(ice_con, "orders_enriched")
-        assert count == 18, f"orders_enriched (Iceberg): expected 18 rows, got {count}"
+        df = self._load_df(catalog, "orders_enriched")
+        assert len(df) == 18, f"orders_enriched (Iceberg): expected 18 rows, got {len(df)}"
 
-    def test_rpt_customer_summary_no_null_ids(self, ice_con):
+    def test_rpt_customer_summary_no_null_ids(self, catalog):
         """rpt_customer_summary Iceberg table: no null customer_id values."""
-        nulls = self._count(ice_con, "rpt_customer_summary", "customer_id IS NULL")
+        df = self._load_df(catalog, "rpt_customer_summary")
+        nulls = df["customer_id"].isna().sum()
         assert nulls == 0, f"rpt_customer_summary (Iceberg): {nulls} null customer_id(s)"
 
-    def test_rpt_customer_summary_positive_spend(self, ice_con):
+    def test_rpt_customer_summary_positive_spend(self, catalog):
         """rpt_customer_summary Iceberg table: all total_spend > 0."""
-        bad = self._count(ice_con, "rpt_customer_summary", "total_spend <= 0 OR total_spend IS NULL")
+        df = self._load_df(catalog, "rpt_customer_summary")
+        bad = ((df["total_spend"] <= 0) | df["total_spend"].isna()).sum()
         assert bad == 0, f"rpt_customer_summary (Iceberg): {bad} customer(s) with total_spend <= 0"
 
-    def test_rpt_customer_summary_row_count(self, ice_con):
+    def test_rpt_customer_summary_row_count(self, catalog):
         """rpt_customer_summary Iceberg table: one row per seeded customer (8)."""
-        count = self._count(ice_con, "rpt_customer_summary")
-        assert count == 8, f"rpt_customer_summary (Iceberg): expected 8 rows, got {count}"
+        df = self._load_df(catalog, "rpt_customer_summary")
+        assert len(df) == 8, f"rpt_customer_summary (Iceberg): expected 8 rows, got {len(df)}"
 
-    def test_rpt_revenue_by_category_no_null_revenue(self, ice_con):
+    def test_rpt_revenue_by_category_no_null_revenue(self, catalog):
         """rpt_revenue_by_category Iceberg table: total_revenue not null and > 0."""
-        bad = self._count(
-            ice_con, "rpt_revenue_by_category",
-            "total_revenue IS NULL OR total_revenue <= 0"
-        )
+        df = self._load_df(catalog, "rpt_revenue_by_category")
+        bad = ((df["total_revenue"] <= 0) | df["total_revenue"].isna()).sum()
         assert bad == 0, f"rpt_revenue_by_category (Iceberg): {bad} row(s) with null/zero revenue"
 
-    def test_rpt_revenue_by_category_no_null_category(self, ice_con):
+    def test_rpt_revenue_by_category_no_null_category(self, catalog):
         """rpt_revenue_by_category Iceberg table: category column not null."""
-        nulls = self._count(ice_con, "rpt_revenue_by_category", "category IS NULL")
+        df = self._load_df(catalog, "rpt_revenue_by_category")
+        nulls = df["category"].isna().sum()
         assert nulls == 0, f"rpt_revenue_by_category (Iceberg): {nulls} null category value(s)"
 
-    def test_rpt_product_performance_no_null_ids(self, ice_con):
+    def test_rpt_product_performance_no_null_ids(self, catalog):
         """rpt_product_performance Iceberg table: no null product_id values."""
-        nulls = self._count(ice_con, "rpt_product_performance", "product_id IS NULL")
+        df = self._load_df(catalog, "rpt_product_performance")
+        nulls = df["product_id"].isna().sum()
         assert nulls == 0, f"rpt_product_performance (Iceberg): {nulls} null product_id(s)"
 
-    def test_rpt_product_performance_positive_revenue(self, ice_con):
+    def test_rpt_product_performance_positive_revenue(self, catalog):
         """rpt_product_performance Iceberg table: all products have total_revenue > 0."""
-        bad = self._count(
-            ice_con, "rpt_product_performance",
-            "total_revenue IS NULL OR total_revenue <= 0"
-        )
+        df = self._load_df(catalog, "rpt_product_performance")
+        bad = ((df["total_revenue"] <= 0) | df["total_revenue"].isna()).sum()
         assert bad == 0, f"rpt_product_performance (Iceberg): {bad} product(s) with no revenue"
 
-    def test_rpt_revenue_by_country_not_null_country(self, ice_con):
+    def test_rpt_revenue_by_country_not_null_country(self, catalog):
         """rpt_revenue_by_country Iceberg table: country column not null."""
-        nulls = self._count(ice_con, "rpt_revenue_by_country", "country IS NULL")
+        df = self._load_df(catalog, "rpt_revenue_by_country")
+        nulls = df["country"].isna().sum()
         assert nulls == 0, f"rpt_revenue_by_country (Iceberg): {nulls} null country value(s)"
 
-    def test_rpt_revenue_by_country_positive_revenue(self, ice_con):
+    def test_rpt_revenue_by_country_positive_revenue(self, catalog):
         """rpt_revenue_by_country Iceberg table: total_revenue > 0 for all rows."""
-        bad = self._count(
-            ice_con, "rpt_revenue_by_country",
-            "total_revenue IS NULL OR total_revenue <= 0"
-        )
+        df = self._load_df(catalog, "rpt_revenue_by_country")
+        bad = ((df["total_revenue"] <= 0) | df["total_revenue"].isna()).sum()
         assert bad == 0, f"rpt_revenue_by_country (Iceberg): {bad} row(s) with null/zero revenue"
 
 
