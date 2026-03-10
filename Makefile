@@ -23,10 +23,12 @@ docker-up:
 	docker compose ps
 
 ## nessie-wait: block until the Nessie catalog API is reachable
+## Respects NESSIE_URL env var (default: http://localhost:19120)
+NESSIE_BASE_URL ?= $(if $(NESSIE_URL),$(NESSIE_URL),http://localhost:19120)
 nessie-wait:
-	@echo "Waiting for Nessie catalog at http://localhost:19120 …"
+	@echo "Waiting for Nessie catalog at $(NESSIE_BASE_URL) …"
 	@for i in $$(seq 1 30); do \
-		curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1 && echo "✓ Nessie is ready." && exit 0; \
+		curl -sf $(NESSIE_BASE_URL)/api/v2/config > /dev/null 2>&1 && echo "✓ Nessie is ready." && exit 0; \
 		echo "  attempt $$i/30 — retrying in 2s …"; \
 		sleep 2; \
 	done; \

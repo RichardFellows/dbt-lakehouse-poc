@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DB = PROJECT_ROOT / "dbt_project" / "target" / "lakehouse.duckdb"
 DEFAULT_WAREHOUSE = str(PROJECT_ROOT / "output" / "iceberg" / "warehouse")
-DEFAULT_NESSIE_URL = "http://localhost:19120"
+DEFAULT_NESSIE_URL = os.environ.get("NESSIE_URL", "http://localhost:19120")
 DEFAULT_NAMESPACE = "default"
 
 TABLES = [
