@@ -1,0 +1,6 @@
+projectKey=dbt-lakehouse-poc
+serverUrl=http://localhost:9100
+serverVersion=26.2.0.119303
+dashboardUrl=http://localhost:9100/dashboard?id=dbt-lakehouse-poc
+ceTaskId=76db717b-71f8-4cbc-9444-23a0661ff0ad
+ceTaskUrl=http://localhost:9100/api/ce/task?id=76db717b-71f8-4cbc-9444-23a0661ff0ad

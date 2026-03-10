@@ -4,7 +4,7 @@ build-backend = "setuptools.backends.legacy:build"
 
 [project]
 name = "dbt-lakehouse-poc"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lakehouse pipeline PoC: MSSQL → Arrow Parquet → dbt/DuckDB → Apache Iceberg → Jupyter"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,12 +14,10 @@ dependencies = [
     "dbt-core==1.9.0",
     "dbt-duckdb==1.9.1",
     "duckdb>=1.1.0",
-    "marimo<0.9.0",
     "pandas>=2.0.0",
     "pyarrow>=14.0.0",
-    "altair>=5.0.0",
     "pyodbc>=5.0.0",
-    "pyiceberg[rest]>=0.7.0",
+    "pyiceberg[rest,s3fs]>=0.7.0",
     "jupyter>=1.0.0",
     "nbconvert>=7.0.0",
     "sqlalchemy>=2.0.0",
