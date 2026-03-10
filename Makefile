@@ -3,7 +3,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
-DBT := cd dbt_project &&
+DBT := cd dbt_project && PATH=../$(VENV)/bin:$$PATH
 
 ## setup: create virtual environment and install all dependencies
 setup:
