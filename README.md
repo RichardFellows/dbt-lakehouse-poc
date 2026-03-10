@@ -125,7 +125,8 @@ Copy `.env.example` to `.env` and update:
 ### Nessie configuration
 
 Nessie is configured via environment variables in `docker-compose.yml`:
-- Uses in-memory version store (data lost on container restart — fine for a POC)
+- Uses RocksDB version store — catalog metadata persists across `docker compose restart`
+- RocksDB data stored in the `nessie_data` Docker volume at `/data/nessie` inside the container
 - Warehouse `warehouse` mapped to `s3://lakehouse/` on MinIO
 - S3 credentials passed via the `urn:nessie-secret:quarkus:` indirection pattern
 - Authentication disabled
@@ -269,7 +270,7 @@ Iceberg adds table-level semantics on top of Parquet: ACID transactions, schema 
 - **Standard Iceberg REST spec** — DuckDB, Spark, and Trino can all connect to the same catalog
 - **Git-like branching** — create isolated branches for schema experiments without affecting `main`
 - **Schema evolution tracking** — every DDL change is versioned alongside the data
-- **Single Docker container** — `ghcr.io/projectnessie/nessie` with an in-memory store for the POC
+- **Single Docker container** — `ghcr.io/projectnessie/nessie` backed by a RocksDB store so catalog metadata survives container restarts
 
 [MinIO](https://min.io) provides S3-compatible object storage, which Nessie uses as the backing store for Iceberg data and metadata files. This mirrors production lakehouse patterns (S3/GCS/ADLS) while running entirely on localhost.
 

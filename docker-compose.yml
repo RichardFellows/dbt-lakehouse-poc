@@ -51,7 +51,8 @@ services:
       minio:
         condition: service_healthy
     environment:
-      - nessie.version.store.type=IN_MEMORY
+      - nessie.version.store.type=ROCKSDB
+      - nessie.version.store.persist.rocks.database-path=/data/nessie
       - nessie.catalog.default-warehouse=warehouse
       - nessie.catalog.warehouses.warehouse.location=s3://lakehouse/
       - nessie.catalog.service.s3.default-options.region=us-east-1
@@ -61,6 +62,8 @@ services:
       - nessie.catalog.secrets.access-key.name=minioadmin
       - nessie.catalog.secrets.access-key.secret=minioadmin
       - nessie.server.authentication.enabled=false
+    volumes:
+      - nessie_data:/data/nessie
     healthcheck:
       test:
         - CMD-SHELL
@@ -76,3 +79,4 @@ services:
 volumes:
   mssql_data:
   minio_data:
+  nessie_data:
