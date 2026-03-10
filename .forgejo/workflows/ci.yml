@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          SA_PASSWORD: ${{ secrets.SA_PASSWORD }}
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P \"$SA_PASSWORD\" -Q 'SELECT 1' -No"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 30s
+
+      nessie:
+        image: ghcr.io/projectnessie/nessie:latest
+        env:
+          nessie.version.store.type: IN_MEMORY
+        ports:
+          - 19120:19120
+        options: >-
+          --health-cmd "curl -sf http://localhost:19120/api/v2/config"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+
+    env:
+      SA_PASSWORD: ${{ secrets.SA_PASSWORD }}
+      MSSQL_SERVER: localhost
+      MSSQL_PORT: "1433"
+      MSSQL_DATABASE: lakehouse_source
+      MSSQL_USER: SA
+      MSSQL_PASSWORD: ${{ secrets.SA_PASSWORD }}
+      MSSQL_DRIVER: ODBC Driver 18 for SQL Server
+      MSSQL_TRUST_CERT: "1"
+      NESSIE_URI: http://localhost:19120/api/v1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ODBC Driver 18 for SQL Server
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Create venv and install dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Seed MSSQL
+        # Service containers are healthy at this point; seed directly via sqlcmd
+        # rather than going through docker inspect/exec (no named container in CI).
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd \
+            -S localhost,1433 \
+            -U SA \
+            -P "${SA_PASSWORD}" \
+            -No \
+            -i scripts/init-db.sql
+
+      - name: Write .env for pipeline scripts
+        run: |
+          printf '%s\n' \
+            "ACCEPT_EULA=Y" \
+            "SA_PASSWORD=${SA_PASSWORD}" \
+            "MSSQL_PID=Developer" \
+            "MSSQL_SERVER=${MSSQL_SERVER}" \
+            "MSSQL_PORT=${MSSQL_PORT}" \
+            "MSSQL_DATABASE=${MSSQL_DATABASE}" \
+            "MSSQL_USER=${MSSQL_USER}" \
+            "MSSQL_PASSWORD=${MSSQL_PASSWORD}" \
+            "MSSQL_DRIVER=${MSSQL_DRIVER}" \
+            "MSSQL_TRUST_CERT=${MSSQL_TRUST_CERT}" \
+            > .env
+
+      - name: Run full CI pipeline
+        run: make ci-full
