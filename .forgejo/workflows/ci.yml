@@ -41,7 +41,7 @@ jobs:
           sed -i 's/^[[:space:]]*//' .env
 
       - name: Start services (MSSQL + Nessie)
-        run: docker compose up -d
+        run: docker compose up -d --force-recreate
 
       - name: Wait for MSSQL to be healthy
         run: |
