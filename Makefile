@@ -12,14 +12,14 @@ setup:
 	$(PIP) install -r requirements.txt
 	@echo "✓ Environment ready. Activate with: source $(VENV)/bin/activate"
 
-## docker-up: start MSSQL and Nessie containers (requires .env)
+## docker-up: start MSSQL, LocalStack, and Nessie containers (requires .env)
 docker-up:
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found. Copy .env.example to .env and fill in values."; \
 		exit 1; \
 	fi
 	docker compose up -d
-	@echo "✓ MSSQL + Nessie containers started. Waiting for healthchecks..."
+	@echo "✓ MSSQL + LocalStack + Nessie containers started. Waiting for healthchecks..."
 	docker compose ps
 
 ## nessie-wait: block until the Nessie catalog API is reachable

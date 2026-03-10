@@ -22,20 +22,18 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  minio:
-    image: quay.io/minio/minio:latest
-    container_name: lakehouse-minio
-    command: server /data --console-address ":9001"
+  localstack:
+    image: localstack/localstack:4.6.0
+    container_name: lakehouse-localstack
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "4566:4566"
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      - SERVICES=s3
+      - AWS_DEFAULT_REGION=us-east-1
     volumes:
-      - minio_data:/data
+      - localstack_data:/var/lib/localstack
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-sf", "http://localhost:4566/_localstack/health"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -48,7 +46,7 @@ services:
     ports:
       - "19120:19120"
     depends_on:
-      minio:
+      localstack:
         condition: service_healthy
     environment:
       - nessie.version.store.type=ROCKSDB
@@ -57,10 +55,10 @@ services:
       - nessie.catalog.warehouses.warehouse.location=s3://lakehouse/
       - nessie.catalog.service.s3.default-options.region=us-east-1
       - nessie.catalog.service.s3.default-options.path-style-access=true
-      - nessie.catalog.service.s3.default-options.endpoint=http://minio:9000/
+      - nessie.catalog.service.s3.default-options.endpoint=http://localstack:4566/
       - nessie.catalog.service.s3.default-options.access-key=urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key
-      - nessie.catalog.secrets.access-key.name=minioadmin
-      - nessie.catalog.secrets.access-key.secret=minioadmin
+      - nessie.catalog.secrets.access-key.name=test
+      - nessie.catalog.secrets.access-key.secret=test
       - nessie.server.authentication.enabled=false
     volumes:
       - nessie_data:/data/nessie
@@ -78,5 +76,5 @@ services:
 
 volumes:
   mssql_data:
-  minio_data:
+  localstack_data:
   nessie_data:

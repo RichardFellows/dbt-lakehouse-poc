@@ -26,18 +26,18 @@ A proof-of-concept **lakehouse pipeline** demonstrating the full journey from an
                                                 ┌──────────────────┐
                                                 │  pyiceberg        │
                                                 │  → Iceberg tables │
-                                                │  (Nessie + MinIO) │
+                                                │  (Nessie+LocalStack│
                                                 └──────────────────┘
                                                                │
                          Jupyter Notebook        Nessie REST    │
                         ┌──────────────────┐    catalog :19120  │
                         │  PyIceberg       │<───────────────────┘
-                        │  matplotlib      │    MinIO S3 :9000
+                        │  matplotlib      │    LocalStack S3 :4566
                         │  plotly          │
                         └──────────────────┘
 ```
 
-**Data flow:** MSSQL → `extract.py` → Parquet → dbt/DuckDB → Iceberg (Nessie + MinIO) → Jupyter
+**Data flow:** MSSQL → `extract.py` → Parquet → dbt/DuckDB → Iceberg (Nessie + LocalStack) → Jupyter
 
 ---
 
@@ -45,7 +45,7 @@ A proof-of-concept **lakehouse pipeline** demonstrating the full journey from an
 
 | Requirement | Notes |
 |-------------|-------|
-| **Docker** + Docker Compose v2 | Runs MSSQL, Nessie, and MinIO containers |
+| **Docker** + Docker Compose v2 | Runs MSSQL, Nessie, and LocalStack containers |
 | **Python 3.11+** | 3.11 recommended (matches CI) |
 | **ODBC Driver 18 for SQL Server** | `msodbcsql18` — [install guide](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server) |
 
@@ -77,12 +77,12 @@ make notebook
 ### What `make all` does
 
 1. **setup** — creates a Python virtualenv and installs all dependencies
-2. **docker-up** — starts three containers: MSSQL 2022, MinIO (S3-compatible storage), and Nessie (Iceberg REST catalog)
+2. **docker-up** — starts three containers: MSSQL 2022, LocalStack (S3-compatible storage), and Nessie (Iceberg REST catalog)
 3. **nessie-wait** — blocks until the Nessie API is reachable
 4. **seed** — waits for MSSQL to be healthy, then runs `scripts/init-db.sql` to create the `lakehouse_source` database with sample data (8 customers, 8 products, 18 orders)
 5. **extract** — connects to MSSQL via pyodbc, extracts all tables to `data/parquet/` as Arrow Parquet files
 6. **transform** — runs `dbt run` to materialise staging views, enriched marts, and reporting tables into a DuckDB database at `output/analytics.duckdb`
-7. **load-iceberg** — reads the dbt output tables from DuckDB and writes them as Iceberg tables to MinIO, catalogued via Nessie's REST API
+7. **load-iceberg** — reads the dbt output tables from DuckDB and writes them as Iceberg tables to LocalStack S3, catalogued via Nessie's REST API
 
 ---
 
@@ -112,22 +112,22 @@ Copy `.env.example` to `.env` and update:
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
 | **mssql** | `mcr.microsoft.com/mssql/server:2022-latest` | 1433 | Source operational database |
-| **minio** | `quay.io/minio/minio:latest` | 9000 (API), 9001 (console) | S3-compatible object storage for Iceberg data files |
+| **localstack** | `localstack/localstack:4.6.0` | 4566 | S3-compatible object storage for Iceberg data files |
 | **nessie** | `ghcr.io/projectnessie/nessie:latest` | 19120 | Iceberg REST catalog with Git-like branching |
 
-### MinIO credentials
+### LocalStack credentials
 
-- **Access key:** `minioadmin`
-- **Secret key:** `minioadmin`
+- **Access key:** `test`
+- **Secret key:** `test`
 - **Bucket:** `lakehouse` (created automatically by `iceberg_output.py` via Nessie)
-- **Console:** http://localhost:9001
+- **Endpoint:** http://localhost:4566
 
 ### Nessie configuration
 
 Nessie is configured via environment variables in `docker-compose.yml`:
 - Uses RocksDB version store — catalog metadata persists across `docker compose restart`
 - RocksDB data stored in the `nessie_data` Docker volume at `/data/nessie` inside the container
-- Warehouse `warehouse` mapped to `s3://lakehouse/` on MinIO
+- Warehouse `warehouse` mapped to `s3://lakehouse/` on LocalStack
 - S3 credentials passed via the `urn:nessie-secret:quarkus:` indirection pattern
 - Authentication disabled
 
@@ -138,7 +138,7 @@ Nessie is configured via environment variables in `docker-compose.yml`:
 | Target | Description |
 |--------|-------------|
 | `make setup` | Create `.venv` and install all Python dependencies |
-| `make docker-up` | Start MSSQL + MinIO + Nessie containers (requires `.env`) |
+| `make docker-up` | Start MSSQL + LocalStack + Nessie containers (requires `.env`) |
 | `make nessie-wait` | Block until Nessie catalog API is reachable |
 | `make seed` | Wait for MSSQL health check, then load seed data |
 | `make extract` | Pull MSSQL tables → Parquet files in `data/parquet/` |
@@ -198,9 +198,9 @@ dbt-duckdb-poc/
 │   └── analytics.duckdb             # DuckDB database (created by dbt)
 │
 ├── extract.py                       # MSSQL → Arrow Parquet extraction
-├── iceberg_output.py                # DuckDB → Iceberg export (via Nessie + MinIO)
+├── iceberg_output.py                # DuckDB → Iceberg export (via Nessie + LocalStack)
 ├── notebook.ipynb                   # Jupyter notebook — Iceberg analytics
-├── docker-compose.yml               # MSSQL + MinIO + Nessie services
+├── docker-compose.yml               # MSSQL + LocalStack + Nessie services
 ├── .env.example                     # Environment variable template
 ├── requirements.txt                 # pip dependencies
 ├── pyproject.toml                   # Project metadata + pytest config
@@ -246,7 +246,7 @@ The Forgejo Actions workflow (`.forgejo/workflows/ci.yml`) runs on every push/PR
 
 1. Sets up Python 3.11 + uv for fast dependency installation
 2. Starts MSSQL as a service container
-3. Downloads and starts MinIO + Nessie as in-container processes
+3. Downloads and starts MinIO + Nessie as in-container processes (CI uses MinIO binary for simplicity; local dev uses LocalStack via Docker Compose)
 4. Runs `make ci-full` (extract → transform → dbt test → Iceberg load → e2e tests)
 
 ---
@@ -261,7 +261,7 @@ DuckDB is an in-process analytical database — no server to manage. It reads Pa
 
 Parquet provides a clean handoff boundary between extraction and transformation. The `extract.py` step writes schema-embedded, compressed columnar files that any tool in the ecosystem can read (DuckDB, Spark, Pandas, Polars). This decouples the source system from the transformation layer — dbt never connects to MSSQL.
 
-### Why Apache Iceberg + Nessie + MinIO?
+### Why Apache Iceberg + Nessie + LocalStack?
 
 Iceberg adds table-level semantics on top of Parquet: ACID transactions, schema evolution, time travel, and partition pruning.
 
@@ -270,9 +270,9 @@ Iceberg adds table-level semantics on top of Parquet: ACID transactions, schema 
 - **Standard Iceberg REST spec** — DuckDB, Spark, and Trino can all connect to the same catalog
 - **Git-like branching** — create isolated branches for schema experiments without affecting `main`
 - **Schema evolution tracking** — every DDL change is versioned alongside the data
-- **Single Docker container** — `ghcr.io/projectnessie/nessie` backed by a RocksDB store so catalog metadata survives container restarts
+- **Single Docker container** — `ghcr.io/projectnessie/nessie` backed by RocksDB so catalog metadata survives container restarts
 
-[MinIO](https://min.io) provides S3-compatible object storage, which Nessie uses as the backing store for Iceberg data and metadata files. This mirrors production lakehouse patterns (S3/GCS/ADLS) while running entirely on localhost.
+[LocalStack](https://localstack.cloud) provides S3-compatible object storage (`localstack/localstack:4.6.0`), which Nessie uses as the backing store for Iceberg data and metadata files. This mirrors production lakehouse patterns (S3/GCS/ADLS) while running entirely on localhost.
 
 The Jupyter notebook reads Iceberg tables via PyIceberg's `RestCatalog`, proving the open-catalog pattern works end-to-end on a laptop.
 
@@ -289,7 +289,7 @@ The Jupyter notebook reads Iceberg tables via PyIceberg's `RestCatalog`, proving
 | [dbt-core](https://docs.getdbt.com) + [dbt-duckdb](https://github.com/duckdb/dbt-duckdb) | Transformation framework |
 | [Apache Iceberg](https://iceberg.apache.org) + [pyiceberg](https://py.iceberg.apache.org) | Open table format |
 | [Apache Nessie](https://projectnessie.org) | REST catalog — Git-like branching & multi-engine access |
-| [MinIO](https://min.io) | S3-compatible object storage |
+| [LocalStack](https://localstack.cloud) | S3-compatible object storage (local AWS emulation) |
 | [Jupyter](https://jupyter.org) | Interactive analysis notebooks |
 | [matplotlib](https://matplotlib.org) + [plotly](https://plotly.com/python/) | Visualisation |
 
@@ -309,12 +309,12 @@ The Jupyter notebook reads Iceberg tables via PyIceberg's `RestCatalog`, proving
 - On macOS: `brew install microsoft/mssql-release/msodbcsql18`
 - On Ubuntu: follow the apt repo instructions from the guide above
 
-### Nessie / MinIO issues
+### Nessie / LocalStack issues
 
 - Check containers are running: `docker compose ps`
 - Check Nessie health: `curl http://localhost:19120/api/v2/config`
-- Check MinIO health: `curl http://localhost:9000/minio/health/live`
-- MinIO console (browse buckets): http://localhost:9001 (minioadmin/minioadmin)
+- Check LocalStack health: `curl http://localhost:4566/_localstack/health`
+- List S3 buckets: `aws --endpoint-url=http://localhost:4566 s3 ls` (credentials: test/test)
 
 ### extract.py fails with "database not found"
 

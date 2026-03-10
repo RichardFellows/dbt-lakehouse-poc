@@ -66,7 +66,7 @@ def setup_catalog(nessie_url: str, warehouse: str) -> RestCatalog:
     PyIceberg via the REST config response — no client-side S3 config
     needed.
 
-    For local dev (Docker Compose), Nessie + MinIO run together and
+    For local dev (Docker Compose), Nessie + LocalStack run together and
     ``warehouse`` defaults to the Nessie-configured name.
     """
     catalog = RestCatalog(
@@ -109,7 +109,7 @@ def write_iceberg_table(
 
     The table location is derived by Nessie from the warehouse config —
     no client-side location override needed.  Data files land wherever
-    the warehouse is configured to point (S3/MinIO in CI, or S3/MinIO
+    the warehouse is configured to point (S3/LocalStack in CI, or S3/LocalStack
     locally via Docker Compose).
     """
     identifier = f"{DEFAULT_NAMESPACE}.{table_name}"
@@ -135,7 +135,7 @@ def verify_iceberg_table(
     """Read an Iceberg table back via PyIceberg and return row count.
 
     Uses the catalog to load the table and scan it — works regardless
-    of whether the data lives on local filesystem or S3/MinIO.
+    of whether the data lives on local filesystem or S3/LocalStack.
     """
     identifier = f"{DEFAULT_NAMESPACE}.{table_name}"
     table = catalog.load_table(identifier)
