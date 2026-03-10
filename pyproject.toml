@@ -21,10 +21,22 @@ dependencies = [
     "pyodbc>=5.0.0",
     "pyiceberg[rest]>=0.7.0",
     "jupyter>=1.0.0",
+    "nbconvert>=7.0.0",
     "sqlalchemy>=2.0.0",
     "matplotlib>=3.8.0",
     "plotly>=5.18.0",
 ]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 
 [project.urls]
 Repository = "https://gitlab.com/richard-fellows/dbt-duckdb-poc"

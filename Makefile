@@ -1,4 +1,4 @@
-.PHONY: setup docker-up nessie-wait seed extract transform load-iceberg notebook all ci test clean docker-down
+.PHONY: setup docker-up nessie-wait seed extract transform load-iceberg notebook all ci test test-e2e ci-full clean docker-down
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
@@ -77,6 +77,15 @@ all: setup docker-up nessie-wait seed extract transform load-iceberg
 ## ci: CI-friendly pipeline (assumes MSSQL already running and seeded)
 ci: extract transform test
 	@echo "✓ CI pipeline passed."
+
+## test-e2e: run the full end-to-end pytest suite (assumes Docker services running and DB seeded)
+test-e2e:
+	$(VENV)/bin/pytest tests/test_e2e.py -v --tb=short
+	@echo "✓ E2E test suite passed."
+
+## ci-full: full CI pipeline including end-to-end tests (assumes Docker services running and DB seeded)
+ci-full: extract transform test load-iceberg test-e2e
+	@echo "✓ Full CI pipeline (including e2e) passed."
 
 ## clean: remove virtual environment, output files, and caches
 clean:
