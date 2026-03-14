@@ -1,0 +1,172 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          SA_PASSWORD: ${{ secrets.SA_PASSWORD }}
+          MSSQL_PID: Developer
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P \"$SA_PASSWORD\" -Q 'SELECT 1' -No"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 30s
+
+    env:
+      MSSQL_SERVER: localhost
+      MSSQL_PORT: "1433"
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_REGION: us-east-1
+      MSSQL_DATABASE: lakehouse_source
+      MSSQL_USER: SA
+      MSSQL_PASSWORD: ${{ secrets.SA_PASSWORD }}
+      MSSQL_DRIVER: ODBC Driver 18 for SQL Server
+      MSSQL_TRUST_CERT: "1"
+      NESSIE_URL: http://localhost:19120
+      CI: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ODBC Driver 18 for SQL Server
+        run: |
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+            | sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list \
+            | sudo tee /etc/apt/sources.list.d/mssql-release.list
+          sudo apt-get update
+          sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18 mssql-tools18 unixodbc-dev
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Create venv and install dependencies
+        run: |
+          $HOME/.local/bin/uv venv .venv
+          $HOME/.local/bin/uv pip install -r requirements.txt
+
+      - name: Start MinIO
+        run: |
+          curl -fsSL https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+          sudo chmod +x /usr/local/bin/minio /usr/local/bin/mc
+
+          mkdir -p /tmp/minio-data
+          MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+            nohup minio server /tmp/minio-data --address :9000 > /tmp/minio.log 2>&1 &
+
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 && break
+            sleep 1
+          done
+          echo "MinIO ready"
+
+          mc alias set ci http://localhost:9000 minioadmin minioadmin
+          mc mb ci/lakehouse --ignore-existing
+          echo "MinIO bucket 'lakehouse' created"
+
+      - name: Start Nessie
+        run: |
+          sudo apt-get install -y -qq default-jre-headless > /dev/null 2>&1
+
+          NESSIE_VERSION=0.107.4
+          curl -fsSL "https://github.com/projectnessie/nessie/releases/download/nessie-${NESSIE_VERSION}/nessie-quarkus-${NESSIE_VERSION}-runner.jar" \
+            -o /tmp/nessie-runner.jar
+
+          cat > /tmp/nessie-application.properties << 'PROPS'
+          nessie.version.store.type=IN_MEMORY
+          nessie.catalog.default-warehouse=warehouse
+          nessie.catalog.warehouses.warehouse.location=s3://lakehouse/
+          nessie.catalog.service.s3.default-options.region=us-east-1
+          nessie.catalog.service.s3.default-options.path-style-access=true
+          nessie.catalog.service.s3.default-options.endpoint=http://localhost:9000/
+          nessie.catalog.service.s3.default-options.access-key=urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key
+          nessie.server.authentication.enabled=false
+          quarkus.http.port=19120
+          quarkus.management.port=9900
+          PROPS
+          sed -i 's/^[[:space:]]*//' /tmp/nessie-application.properties
+
+          nohup env \
+            'nessie.catalog.secrets.access-key.name=minioadmin' \
+            'nessie.catalog.secrets.access-key.secret=minioadmin' \
+            java \
+            -Dquarkus.config.locations=/tmp/nessie-application.properties \
+            -jar /tmp/nessie-runner.jar > /tmp/nessie.log 2>&1 &
+          NESSIE_PID=$!
+          echo "Nessie PID: $NESSIE_PID"
+
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1; then
+              echo "Nessie ready after ~$((i*2))s"
+              break
+            fi
+            if ! kill -0 $NESSIE_PID 2>/dev/null; then
+              echo "ERROR: Nessie process died"
+              cat /tmp/nessie.log
+              exit 1
+            fi
+            sleep 2
+          done
+
+          if ! curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1; then
+            echo "ERROR: Nessie did not start. Logs:"
+            cat /tmp/nessie.log
+            exit 1
+          fi
+
+      - name: Seed MSSQL
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd \
+            -S localhost,1433 \
+            -U SA \
+            -P "$MSSQL_PASSWORD" \
+            -No \
+            -i scripts/init-db.sql
+
+      - name: Write .env for pipeline scripts
+        run: |
+          cat > .env << EOF
+          ACCEPT_EULA=Y
+          SA_PASSWORD=${{ secrets.SA_PASSWORD }}
+          MSSQL_PID=Developer
+          MSSQL_SERVER=localhost
+          MSSQL_PORT=1433
+          MSSQL_DATABASE=lakehouse_source
+          MSSQL_USER=SA
+          MSSQL_PASSWORD=${{ secrets.SA_PASSWORD }}
+          MSSQL_DRIVER=ODBC Driver 18 for SQL Server
+          MSSQL_TRUST_CERT=1
+          EOF
+          sed -i 's/^[[:space:]]*//' .env
+
+      - name: Run full CI pipeline (extract → transform → dbt test → Iceberg → e2e)
+        run: make ci-full
