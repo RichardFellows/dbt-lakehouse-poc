@@ -113,6 +113,7 @@ jobs:
             -e nessie.catalog.secrets.access-key.name=minioadmin \
             -e nessie.catalog.secrets.access-key.secret=minioadmin \
             -e nessie.server.authentication.enabled=false \
+            -e quarkus.management.port=9900 \
             ghcr.io/projectnessie/nessie:latest
 
           # Wait for Nessie API
