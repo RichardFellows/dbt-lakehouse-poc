@@ -118,7 +118,9 @@ jobs:
           PROPS
           sed -i 's/^[[:space:]]*//' /tmp/nessie-application.properties
 
-          nohup env \
+          # Test that Java can at least load the JAR
+          echo "=== Testing Nessie JAR ==="
+          env \
             'nessie.catalog.secrets.access-key.name=minioadmin' \
             'nessie.catalog.secrets.access-key.secret=minioadmin' \
             java \
@@ -127,19 +129,33 @@ jobs:
           NESSIE_PID=$!
           echo "Nessie PID: $NESSIE_PID"
 
-          # Give it a moment to start or crash
-          sleep 3
+          # Give it time to start (Quarkus JIT is slow)
+          sleep 5
+
+          # Check if it's still alive
+          if ! kill -0 $NESSIE_PID 2>/dev/null; then
+            echo "ERROR: Nessie process died early. Log contents:"
+            cat /tmp/nessie.log
+            echo "=== end of log ==="
+            # Try running synchronously to see the error
+            echo "=== Synchronous test run ==="
+            env \
+              'nessie.catalog.secrets.access-key.name=minioadmin' \
+              'nessie.catalog.secrets.access-key.secret=minioadmin' \
+              java \
+              -Dquarkus.config.locations=/tmp/nessie-application.properties \
+              -jar /tmp/nessie-runner.jar 2>&1 | head -100 || true
+            exit 1
+          fi
 
           for i in $(seq 1 60); do
             if curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1; then
-              echo "Nessie ready after ~$((i*2))s"
+              echo "Nessie ready after ~$((i*2 + 5))s"
               break
             fi
             if ! kill -0 $NESSIE_PID 2>/dev/null; then
               echo "ERROR: Nessie process died. Logs:"
               cat /tmp/nessie.log || echo "(no log file)"
-              echo "---"
-              ls -la /tmp/nessie-runner.jar
               exit 1
             fi
             sleep 2
