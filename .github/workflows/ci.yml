@@ -118,8 +118,22 @@ jobs:
           PROPS
           sed -i 's/^[[:space:]]*//' /tmp/nessie-application.properties
 
-          # Test that Java can at least load the JAR
-          echo "=== Testing Nessie JAR ==="
+          # Diagnostics: test bare Java JAR first
+          echo "=== Java version ==="
+          which java
+          java -version 2>&1
+          echo "=== JAR file ==="
+          ls -la /tmp/nessie-runner.jar
+          file /tmp/nessie-runner.jar
+          echo "=== Properties file ==="
+          cat /tmp/nessie-application.properties
+          echo "=== Testing bare JAR (10s timeout) ==="
+          timeout 10 java -jar /tmp/nessie-runner.jar > /tmp/nessie-test.log 2>&1 || true
+          echo "=== Bare JAR output ==="
+          cat /tmp/nessie-test.log
+          echo "=== End bare JAR test ==="
+
+          # Now start for real
           env \
             'nessie.catalog.secrets.access-key.name=minioadmin' \
             'nessie.catalog.secrets.access-key.secret=minioadmin' \
@@ -129,28 +143,9 @@ jobs:
           NESSIE_PID=$!
           echo "Nessie PID: $NESSIE_PID"
 
-          # Give it time to start (Quarkus JIT is slow)
-          sleep 5
-
-          # Check if it's still alive
-          if ! kill -0 $NESSIE_PID 2>/dev/null; then
-            echo "ERROR: Nessie process died early. Log contents:"
-            cat /tmp/nessie.log
-            echo "=== end of log ==="
-            # Try running synchronously to see the error
-            echo "=== Synchronous test run ==="
-            env \
-              'nessie.catalog.secrets.access-key.name=minioadmin' \
-              'nessie.catalog.secrets.access-key.secret=minioadmin' \
-              java \
-              -Dquarkus.config.locations=/tmp/nessie-application.properties \
-              -jar /tmp/nessie-runner.jar 2>&1 | head -100 || true
-            exit 1
-          fi
-
           for i in $(seq 1 60); do
             if curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1; then
-              echo "Nessie ready after ~$((i*2 + 5))s"
+              echo "Nessie ready after ~$((i*2))s"
               break
             fi
             if ! kill -0 $NESSIE_PID 2>/dev/null; then
