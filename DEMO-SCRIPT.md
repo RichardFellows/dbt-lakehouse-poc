@@ -9,8 +9,8 @@
 Ensure the stack is running:
 
 ```powershell
-docker compose up -d        # MSSQL, LocalStack, Nessie
-make setup                  # Python venv + dependencies
+.\run.ps1 docker-up         # MSSQL, LocalStack, Nessie
+.\run.ps1 setup              # Python venv + dependencies
 ```
 
 Verify all three containers are healthy:
@@ -42,7 +42,7 @@ Have two terminals ready:
 **Seed the database:**
 
 ```powershell
-make seed
+.\run.ps1 seed
 ```
 
 **Show the source data:**
@@ -66,7 +66,7 @@ docker exec lakehouse-mssql /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P 
 ## Part 3: Extract to Parquet (2 min)
 
 ```powershell
-make extract
+.\run.ps1 extract
 ```
 
 **Show the output:**
@@ -88,7 +88,7 @@ dir data\parquet
 ## Part 4: Transform with dbt (3 min)
 
 ```powershell
-make transform
+.\run.ps1 transform
 ```
 
 **Show the dbt output (model summary).**
@@ -115,7 +115,7 @@ Open `dbt_project/models/marts/orders_enriched.sql` in your editor.
 ## Part 5: Test the Data (2 min)
 
 ```powershell
-make test
+.\run.ps1 test
 ```
 
 **Talking points:**
@@ -131,16 +131,10 @@ make test
 ## Part 6: Load to Iceberg (3 min)
 
 ```powershell
-make load-iceberg
+.\run.ps1 load-iceberg
 ```
 
 **Verify the catalog:**
-
-```powershell
-curl http://localhost:19120/api/v2/trees/main | python -m json.tool
-```
-
-Or if `curl` isn't available:
 
 ```powershell
 Invoke-RestMethod http://localhost:19120/api/v2/trees/main | ConvertTo-Json -Depth 5
@@ -167,7 +161,7 @@ Invoke-RestMethod http://localhost:19120/api/v2/trees/main | ConvertTo-Json -Dep
 ## Part 7: Interactive Analytics (3 min)
 
 ```powershell
-make notebook
+.\run.ps1 notebook
 ```
 
 Walk through the Jupyter notebook cells:
@@ -214,12 +208,12 @@ MSSQL (source) → Parquet (extract) → dbt/DuckDB (transform + test) → Icebe
 
 ## Bonus: CI Pipeline (if time allows)
 
-Show `.github/workflows/ci.yml` (or `.forgejo/workflows/ci.yml`):
+Show `.github/workflows/ci.yml`:
 
 > "The entire pipeline runs in CI on every push. MSSQL, LocalStack, and Nessie spin up as containers. Extract, transform, test, load — all automated. 37 end-to-end tests validate the full round trip."
 
 ```powershell
-make test-e2e
+.\run.ps1 test-e2e
 ```
 
 ---
@@ -239,4 +233,4 @@ make test-e2e
 > Yes — either via DuckDB (ODBC/JDBC) for the transformed tables, or via Trino/Spark connected to the Nessie catalog for Iceberg tables. The open catalog spec means any compatible query engine can read the data.
 
 **"What about data governance / lineage?"**
-> dbt generates a lineage graph (`dbt docs generate && dbt docs serve`). Nessie tracks every schema change with Git-like versioning. For full governance you'd add a tool like DataHub or OpenMetadata on top.
+> dbt generates a lineage graph (`dbt docs generate` then `dbt docs serve`). Nessie tracks every schema change with Git-like versioning. For full governance you'd add a tool like DataHub or OpenMetadata on top.
