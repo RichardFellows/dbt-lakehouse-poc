@@ -76,89 +76,62 @@ jobs:
 
       - name: Start MinIO
         run: |
-          curl -fsSL https://dl.min.io/server/minio/release/linux-amd64/minio -o /usr/local/bin/minio
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
-          sudo chmod +x /usr/local/bin/minio /usr/local/bin/mc
+          docker run -d --name minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            quay.io/minio/minio:latest \
+            server /data --console-address ":9001"
 
-          mkdir -p /tmp/minio-data
-          MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-            nohup minio server /tmp/minio-data --address :9000 > /tmp/minio.log 2>&1 &
-
+          # Wait for MinIO
           for i in $(seq 1 30); do
             curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 && break
             sleep 1
           done
           echo "MinIO ready"
 
+          # Install mc and create bucket
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+          sudo chmod +x /usr/local/bin/mc
           mc alias set ci http://localhost:9000 minioadmin minioadmin
           mc mb ci/lakehouse --ignore-existing
           echo "MinIO bucket 'lakehouse' created"
 
       - name: Start Nessie
         run: |
-          # Nessie 0.107.x requires Java 17+
-          sudo apt-get install -y -qq openjdk-17-jre-headless > /dev/null 2>&1
-          java -version
+          # Run Nessie as Docker container — avoids JAR/Java issues
+          # Use host network so Nessie can reach MinIO on localhost:9000
+          docker run -d --name nessie \
+            --network host \
+            -e nessie.version.store.type=IN_MEMORY \
+            -e nessie.catalog.default-warehouse=warehouse \
+            -e nessie.catalog.warehouses.warehouse.location=s3://lakehouse/ \
+            -e nessie.catalog.service.s3.default-options.region=us-east-1 \
+            -e nessie.catalog.service.s3.default-options.path-style-access=true \
+            -e "nessie.catalog.service.s3.default-options.endpoint=http://localhost:9000/" \
+            -e "nessie.catalog.service.s3.default-options.access-key=urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key" \
+            -e nessie.catalog.secrets.access-key.name=minioadmin \
+            -e nessie.catalog.secrets.access-key.secret=minioadmin \
+            -e nessie.server.authentication.enabled=false \
+            ghcr.io/projectnessie/nessie:latest
 
-          NESSIE_VERSION=0.107.4
-          curl -fsSL "https://github.com/projectnessie/nessie/releases/download/nessie-${NESSIE_VERSION}/nessie-quarkus-${NESSIE_VERSION}-runner.jar" \
-            -o /tmp/nessie-runner.jar
-
-          cat > /tmp/nessie-application.properties << 'PROPS'
-          nessie.version.store.type=IN_MEMORY
-          nessie.catalog.default-warehouse=warehouse
-          nessie.catalog.warehouses.warehouse.location=s3://lakehouse/
-          nessie.catalog.service.s3.default-options.region=us-east-1
-          nessie.catalog.service.s3.default-options.path-style-access=true
-          nessie.catalog.service.s3.default-options.endpoint=http://localhost:9000/
-          nessie.catalog.service.s3.default-options.access-key=urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key
-          nessie.server.authentication.enabled=false
-          quarkus.http.port=19120
-          quarkus.management.port=9900
-          PROPS
-          sed -i 's/^[[:space:]]*//' /tmp/nessie-application.properties
-
-          # Diagnostics: test bare Java JAR first
-          echo "=== Java version ==="
-          which java
-          java -version 2>&1
-          echo "=== JAR file ==="
-          ls -la /tmp/nessie-runner.jar
-          file /tmp/nessie-runner.jar
-          echo "=== Properties file ==="
-          cat /tmp/nessie-application.properties
-          echo "=== Testing bare JAR (10s timeout) ==="
-          timeout 10 java -jar /tmp/nessie-runner.jar > /tmp/nessie-test.log 2>&1 || true
-          echo "=== Bare JAR output ==="
-          cat /tmp/nessie-test.log
-          echo "=== End bare JAR test ==="
-
-          # Now start for real
-          env \
-            'nessie.catalog.secrets.access-key.name=minioadmin' \
-            'nessie.catalog.secrets.access-key.secret=minioadmin' \
-            java \
-            -Dquarkus.config.locations=/tmp/nessie-application.properties \
-            -jar /tmp/nessie-runner.jar > /tmp/nessie.log 2>&1 &
-          NESSIE_PID=$!
-          echo "Nessie PID: $NESSIE_PID"
-
+          # Wait for Nessie API
           for i in $(seq 1 60); do
             if curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1; then
               echo "Nessie ready after ~$((i*2))s"
               break
             fi
-            if ! kill -0 $NESSIE_PID 2>/dev/null; then
-              echo "ERROR: Nessie process died. Logs:"
-              cat /tmp/nessie.log || echo "(no log file)"
+            if ! docker inspect --format='{{.State.Running}}' nessie 2>/dev/null | grep -q true; then
+              echo "ERROR: Nessie container stopped"
+              docker logs nessie
               exit 1
             fi
             sleep 2
           done
 
           if ! curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1; then
-            echo "ERROR: Nessie did not start. Logs:"
-            cat /tmp/nessie.log
+            echo "ERROR: Nessie did not start. Container logs:"
+            docker logs nessie
             exit 1
           fi
 
