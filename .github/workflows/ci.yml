@@ -96,7 +96,9 @@ jobs:
 
       - name: Start Nessie
         run: |
-          sudo apt-get install -y -qq default-jre-headless > /dev/null 2>&1
+          # Nessie 0.107.x requires Java 17+
+          sudo apt-get install -y -qq openjdk-17-jre-headless > /dev/null 2>&1
+          java -version
 
           NESSIE_VERSION=0.107.4
           curl -fsSL "https://github.com/projectnessie/nessie/releases/download/nessie-${NESSIE_VERSION}/nessie-quarkus-${NESSIE_VERSION}-runner.jar" \
@@ -125,14 +127,19 @@ jobs:
           NESSIE_PID=$!
           echo "Nessie PID: $NESSIE_PID"
 
+          # Give it a moment to start or crash
+          sleep 3
+
           for i in $(seq 1 60); do
             if curl -sf http://localhost:19120/api/v2/config > /dev/null 2>&1; then
               echo "Nessie ready after ~$((i*2))s"
               break
             fi
             if ! kill -0 $NESSIE_PID 2>/dev/null; then
-              echo "ERROR: Nessie process died"
-              cat /tmp/nessie.log
+              echo "ERROR: Nessie process died. Logs:"
+              cat /tmp/nessie.log || echo "(no log file)"
+              echo "---"
+              ls -la /tmp/nessie-runner.jar
               exit 1
             fi
             sleep 2
