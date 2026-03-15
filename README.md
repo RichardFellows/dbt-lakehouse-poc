@@ -246,7 +246,7 @@ The Forgejo Actions workflow (`.forgejo/workflows/ci.yml`) runs on every push/PR
 
 1. Sets up Python 3.11 + uv for fast dependency installation
 2. Starts MSSQL as a service container
-3. Downloads and starts MinIO + Nessie as in-container processes (CI uses MinIO binary for simplicity; local dev uses LocalStack via Docker Compose)
+3. Starts LocalStack + Nessie as Docker containers for S3-compatible storage and Iceberg catalog
 4. Runs `make ci-full` (extract → transform → dbt test → Iceberg load → e2e tests)
 
 ---

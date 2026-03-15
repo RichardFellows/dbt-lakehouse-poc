@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(~/bin/**)", "Edit(~/.local/bin/**)", "Edit(~/.bashrc)", "Edit(~/.profile)",
+      "Edit(~/.ssh/**)", "Edit(~/.gitconfig)", "Edit(~/.git/hooks/**)",
+      "Edit(/etc/**)", "Edit(/usr/**)",
+      "Bash(sudo *)", "Bash(systemctl *)", "Bash(docker *)", "Bash(rm -rf /*)"
+    ]
+  }
+}
