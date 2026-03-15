@@ -90,7 +90,7 @@ function Invoke-Seed {
     }
 
     Write-Host "Seeding database..."
-    docker exec $container /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P $sa_password -C -i /docker-entrypoint-initdb.d/init-db.sql
+    docker exec $container /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P $sa_password -No -i /scripts/init-db.sql
     Write-Host "✓ Database seeded." -ForegroundColor Green
 }
 
