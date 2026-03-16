@@ -2,14 +2,12 @@
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
 DBT := cd dbt_project && PATH=../$(VENV)/bin:$$PATH
 
-## setup: create virtual environment and install all dependencies
+## setup: create virtual environment and install all dependencies via uv
 setup:
-	python3 -m venv $(VENV)
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
+	uv venv $(VENV)
+	uv pip install --python $(PYTHON) -e ".[test]"
 	@echo "✓ Environment ready. Activate with: source $(VENV)/bin/activate"
 
 ## docker-up: start MSSQL, LocalStack, and Nessie containers (requires .env)

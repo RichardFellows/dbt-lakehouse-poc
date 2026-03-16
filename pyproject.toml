@@ -1,7 +1,3 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
-
 [project]
 name = "dbt-lakehouse-poc"
 version = "0.3.0"
@@ -17,12 +13,13 @@ dependencies = [
     "pandas>=2.0.0",
     "pyarrow>=14.0.0",
     "pyodbc>=5.0.0",
-    "pyiceberg[rest,s3fs]>=0.7.0",
+    "pyiceberg[rest,s3fs]==0.10.0",
     "jupyter>=1.0.0",
     "nbconvert>=7.0.0",
     "sqlalchemy>=2.0.0",
     "matplotlib>=3.8.0",
     "plotly>=5.18.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -30,14 +27,14 @@ test = [
     "pytest>=8.0.0",
 ]
 
+[project.urls]
+Repository = "https://github.com/RichardFellows/dbt-lakehouse-poc"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-
-[project.urls]
-Repository = "https://gitlab.com/richard-fellows/dbt-duckdb-poc"
 
 [tool.setuptools.packages.find]
 where = ["."]

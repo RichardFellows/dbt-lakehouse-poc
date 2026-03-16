@@ -23,7 +23,6 @@ $ErrorActionPreference = "Stop"
 
 $VENV = ".venv"
 $PYTHON = "$VENV\Scripts\python.exe"
-$PIP = "$VENV\Scripts\pip.exe"
 $DBT_DIR = "dbt_project"
 
 # ── Helper: load .env file into environment ──────────────────────────────────
@@ -43,9 +42,8 @@ function Load-DotEnv {
 
 function Invoke-Setup {
     Write-Host "Creating virtual environment..."
-    python -m venv $VENV
-    & $PIP install --upgrade pip
-    & $PIP install -r requirements.txt
+    uv venv $VENV
+    uv pip install --python $PYTHON -e ".[test]"
     Write-Host "✓ Environment ready. Activate with: .venv\Scripts\activate" -ForegroundColor Green
 }
 

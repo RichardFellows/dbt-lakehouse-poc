@@ -202,7 +202,7 @@ dbt-duckdb-poc/
 ├── notebook.ipynb                   # Jupyter notebook — Iceberg analytics
 ├── docker-compose.yml               # MSSQL + LocalStack + Nessie services
 ├── .env.example                     # Environment variable template
-├── requirements.txt                 # pip dependencies
+├── pyproject.toml                   # Project metadata + dependencies (uv/pip)
 ├── pyproject.toml                   # Project metadata + pytest config
 ├── Makefile
 └── README.md

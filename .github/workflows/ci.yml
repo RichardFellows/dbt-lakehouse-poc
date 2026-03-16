@@ -66,13 +66,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: uv-${{ runner.os }}-
 
       - name: Create venv and install dependencies
         run: |
           $HOME/.local/bin/uv venv .venv
-          $HOME/.local/bin/uv pip install -r requirements.txt
+          $HOME/.local/bin/uv pip install -e ".[test]"
 
       - name: Start LocalStack
         run: |
