@@ -91,6 +91,16 @@ def setup_catalog(nessie_url: str, warehouse: str) -> RestCatalog:
 
     catalog = RestCatalog("lakehouse", **catalog_props)
 
+    # Post-init override: Nessie server pushes Docker-internal S3 endpoint
+    # (e.g. http://localstack:4566) via REST config overrides, which takes
+    # precedence over client-side properties. When running from the host,
+    # we must force the endpoint back to the host-accessible URL.
+    if s3_endpoint:
+        catalog.properties["s3.endpoint"] = s3_endpoint
+        catalog.properties["s3.access-key-id"] = os.environ.get("AWS_ACCESS_KEY_ID", "test")
+        catalog.properties["s3.secret-access-key"] = os.environ.get("AWS_SECRET_ACCESS_KEY", "test")
+        catalog.properties["s3.region"] = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+
     try:
         catalog.create_namespace(DEFAULT_NAMESPACE)
         logger.info("Created namespace '%s'", DEFAULT_NAMESPACE)
