@@ -43,8 +43,10 @@ services:
   nessie:
     image: ghcr.io/projectnessie/nessie:latest
     container_name: lakehouse-nessie
-    ports:
-      - "19120:19120"
+    # Host network so Nessie uses localhost:4566 for S3, which is also
+    # reachable from PyIceberg on the host — avoids Docker-internal
+    # hostname mismatch (localstack:4566 vs localhost:4566).
+    network_mode: host
     depends_on:
       localstack:
         condition: service_healthy
@@ -54,7 +56,7 @@ services:
       - nessie.catalog.warehouses.warehouse.location=s3://lakehouse/
       - nessie.catalog.service.s3.default-options.region=us-east-1
       - nessie.catalog.service.s3.default-options.path-style-access=true
-      - nessie.catalog.service.s3.default-options.endpoint=http://localstack:4566/
+      - nessie.catalog.service.s3.default-options.endpoint=http://localhost:4566/
       - nessie.catalog.service.s3.default-options.access-key=urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key
       - nessie.catalog.secrets.access-key.name=test
       - nessie.catalog.secrets.access-key.secret=test

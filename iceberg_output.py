@@ -69,37 +69,17 @@ def setup_catalog(nessie_url: str, warehouse: str) -> RestCatalog:
     For local dev (Docker Compose), Nessie + LocalStack run together and
     ``warehouse`` defaults to the Nessie-configured name.
     """
-    catalog_props = {
-        "uri": f"{nessie_url.rstrip('/')}/iceberg",
-        # Must match a warehouse name configured in Nessie server.
-        "warehouse": warehouse,
-        # Nessie maps each Iceberg REST "prefix" to a branch;
-        # "main" is the default branch name.
-        "prefix": "main",
-    }
-
-    # Allow overriding S3 endpoint for host-side access to LocalStack.
-    # Nessie pushes the Docker-internal hostname (e.g. http://localstack:4566)
-    # which isn't reachable from the host. Set S3_ENDPOINT=http://localhost:4566
-    # when running outside Docker.
-    s3_endpoint = os.environ.get("S3_ENDPOINT")
-    if s3_endpoint:
-        catalog_props["s3.endpoint"] = s3_endpoint
-        catalog_props["s3.access-key-id"] = os.environ.get("AWS_ACCESS_KEY_ID", "test")
-        catalog_props["s3.secret-access-key"] = os.environ.get("AWS_SECRET_ACCESS_KEY", "test")
-        catalog_props["s3.region"] = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-
-    catalog = RestCatalog("lakehouse", **catalog_props)
-
-    # Post-init override: Nessie server pushes Docker-internal S3 endpoint
-    # (e.g. http://localstack:4566) via REST config overrides, which takes
-    # precedence over client-side properties. When running from the host,
-    # we must force the endpoint back to the host-accessible URL.
-    if s3_endpoint:
-        catalog.properties["s3.endpoint"] = s3_endpoint
-        catalog.properties["s3.access-key-id"] = os.environ.get("AWS_ACCESS_KEY_ID", "test")
-        catalog.properties["s3.secret-access-key"] = os.environ.get("AWS_SECRET_ACCESS_KEY", "test")
-        catalog.properties["s3.region"] = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+    catalog = RestCatalog(
+        "lakehouse",
+        **{
+            "uri": f"{nessie_url.rstrip('/')}/iceberg",
+            # Must match a warehouse name configured in Nessie server.
+            "warehouse": warehouse,
+            # Nessie maps each Iceberg REST "prefix" to a branch;
+            # "main" is the default branch name.
+            "prefix": "main",
+        },
+    )
 
     try:
         catalog.create_namespace(DEFAULT_NAMESPACE)
@@ -118,34 +98,6 @@ def read_duckdb_table(db_path: Path, table_name: str) -> pa.Table:
         return arrow_table
     finally:
         con.close()
-
-
-def _apply_s3_overrides(table) -> None:
-    """Override S3 endpoint on a table's IO if S3_ENDPOINT is set.
-
-    Nessie pushes the Docker-internal S3 endpoint (e.g. http://localstack:4566)
-    to PyIceberg via the REST catalog config. When running from the host,
-    we must patch the table's IO properties to use the host-accessible endpoint.
-    """
-    s3_endpoint = os.environ.get("S3_ENDPOINT")
-    if not s3_endpoint:
-        return
-
-    overrides = {
-        "s3.endpoint": s3_endpoint,
-        "s3.access-key-id": os.environ.get("AWS_ACCESS_KEY_ID", "test"),
-        "s3.secret-access-key": os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
-        "s3.region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
-    }
-
-    # Patch the table's IO properties and reinitialise the IO
-    table.metadata_location  # ensure metadata loaded
-    io_props = dict(table.io.properties) if hasattr(table.io, "properties") else {}
-    io_props.update(overrides)
-
-    from pyiceberg.io import load_file_io
-
-    table._io = load_file_io(io_props, table.metadata.location)
 
 
 def write_iceberg_table(
@@ -172,7 +124,6 @@ def write_iceberg_table(
         identifier,
         schema=arrow_table.schema,
     )
-    _apply_s3_overrides(iceberg_table)
     iceberg_table.overwrite(arrow_table)
     logger.debug("Wrote %d rows to '%s'", len(arrow_table), identifier)
 
@@ -188,7 +139,6 @@ def verify_iceberg_table(
     """
     identifier = f"{DEFAULT_NAMESPACE}.{table_name}"
     table = catalog.load_table(identifier)
-    _apply_s3_overrides(table)
     # Use to_arrow() to read the full table via the catalog's FileIO
     scan = table.scan()
     arrow_table = scan.to_arrow()
