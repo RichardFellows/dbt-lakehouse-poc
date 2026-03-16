@@ -1,6 +1,6 @@
 [project]
 name = "dbt-lakehouse-poc"
-version = "0.3.0"
+version = "0.4.0"
 description = "Lakehouse pipeline PoC: MSSQL → Arrow Parquet → dbt/DuckDB → Apache Iceberg → Jupyter"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,7 +23,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = [
+dev = [
+    "awscli-local>=0.22",
     "pytest>=8.0.0",
 ]
 

@@ -47,7 +47,9 @@ A proof-of-concept **lakehouse pipeline** demonstrating the full journey from an
 |-------------|-------|
 | **Docker** + Docker Compose v2 | Runs MSSQL, Nessie, and LocalStack containers |
 | **Python 3.11+** | 3.11 recommended (matches CI) |
-| **ODBC Driver 18 for SQL Server** | `msodbcsql18` — [install guide](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server) |
+| **PowerShell 7+** (`pwsh`) | Cross-platform build script — [install guide](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell) |
+| **uv** | Fast Python package manager — [install guide](https://docs.astral.sh/uv/getting-started/installation/) |
+| **ODBC Driver 17/18 for SQL Server** | `msodbcsql18` or `msodbcsql17` — [install guide](https://learn.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server) |
 
 > **Note:** The ODBC driver is only needed for the extraction step (`extract.py`). If you skip extraction and use the bundled CSV data, you don't need it.
 
@@ -66,23 +68,23 @@ cp .env.example .env
 #   MSSQL_DATABASE=lakehouse_source
 
 # 3. Run the full pipeline
-make all
-# This runs: setup → docker-up → nessie-wait → seed → extract → transform → load-iceberg
+pwsh run.ps1 all
+# This runs: setup → docker-up → nessie-wait → ensure-bucket → seed → extract → transform → load-iceberg
 
 # 4. Explore results in Jupyter
-source .venv/bin/activate
-make notebook
+pwsh run.ps1 notebook
 ```
 
-### What `make all` does
+### What `pwsh run.ps1 all` does
 
-1. **setup** — creates a Python virtualenv and installs all dependencies
+1. **setup** — creates a Python virtualenv via `uv` and installs all dependencies from `pyproject.toml`
 2. **docker-up** — starts three containers: MSSQL 2022, LocalStack (S3-compatible storage), and Nessie (Iceberg REST catalog)
 3. **nessie-wait** — blocks until the Nessie API is reachable
-4. **seed** — waits for MSSQL to be healthy, then runs `scripts/init-db.sql` to create the `lakehouse_source` database with sample data (8 customers, 8 products, 18 orders)
-5. **extract** — connects to MSSQL via pyodbc, extracts all tables to `data/parquet/` as Arrow Parquet files
-6. **transform** — runs `dbt run` to materialise staging views, enriched marts, and reporting tables into a DuckDB database at `output/analytics.duckdb`
-7. **load-iceberg** — reads the dbt output tables from DuckDB and writes them as Iceberg tables to LocalStack S3, catalogued via Nessie's REST API
+4. **ensure-bucket** — uses `awslocal` to create the S3 `lakehouse` bucket on LocalStack
+5. **seed** — waits for MSSQL to be healthy, then runs `scripts/init-db.sql` to create the `lakehouse_source` database with sample data (8 customers, 8 products, 18 orders)
+6. **extract** — connects to MSSQL via pyodbc, extracts all tables to `data/parquet/` as Arrow Parquet files
+7. **transform** — runs `dbt run` to materialise staging views, enriched marts, and reporting tables into a DuckDB database at `output/analytics.duckdb`
+8. **load-iceberg** — reads the dbt output tables from DuckDB and writes them as Iceberg tables to LocalStack S3, catalogued via Nessie's REST API
 
 ---
 
@@ -133,25 +135,28 @@ Nessie is configured via environment variables in `docker-compose.yml`:
 
 ---
 
-## Makefile Targets
+## Build Targets (`run.ps1`)
+
+All targets are run via PowerShell: `pwsh run.ps1 <target>`
 
 | Target | Description |
 |--------|-------------|
-| `make setup` | Create `.venv` and install all Python dependencies |
-| `make docker-up` | Start MSSQL + LocalStack + Nessie containers (requires `.env`) |
-| `make nessie-wait` | Block until Nessie catalog API is reachable |
-| `make seed` | Wait for MSSQL health check, then load seed data |
-| `make extract` | Pull MSSQL tables → Parquet files in `data/parquet/` |
-| `make transform` | Run `dbt run` to materialise staging, marts, and reporting models |
-| `make test` | Run `dbt test` — 26 data tests (uniqueness, not-null) |
-| `make load-iceberg` | Export reporting tables to Iceberg via Nessie REST catalog |
-| `make notebook` | Launch Jupyter notebook for interactive Iceberg analytics |
-| `make test-e2e` | Run full pytest e2e suite (36 tests) |
-| `make all` | Full pipeline: setup → docker-up → seed → extract → transform → load-iceberg |
-| `make ci` | CI-only pipeline: extract → transform → test (no Iceberg) |
-| `make ci-full` | Full CI pipeline including Iceberg + e2e tests |
-| `make clean` | Remove `.venv`, `output/`, and Python caches |
-| `make docker-down` | Stop and remove Docker containers |
+| `setup` | Create `.venv` via `uv` and install all dependencies from `pyproject.toml` |
+| `docker-up` | Start MSSQL + LocalStack + Nessie containers (requires `.env`) |
+| `nessie-wait` | Block until Nessie catalog API is reachable |
+| `ensure-bucket` | Create the S3 `lakehouse` bucket on LocalStack via `awslocal` |
+| `seed` | Wait for MSSQL health check, then load seed data |
+| `extract` | Pull MSSQL tables → Parquet files in `data/parquet/` |
+| `transform` | Run `dbt run` to materialise staging, marts, and reporting models |
+| `test` | Run `dbt test` — 26 data tests (uniqueness, not-null) |
+| `load-iceberg` | Export reporting tables to Iceberg via Nessie REST catalog |
+| `notebook` | Launch Jupyter notebook for interactive Iceberg analytics |
+| `test-e2e` | Run full pytest e2e suite (37 tests) |
+| `all` | Full pipeline: setup → docker-up → ensure-bucket → seed → extract → transform → load-iceberg |
+| `ci` | CI-only pipeline: extract → transform → test (no Iceberg) |
+| `ci-full` | Full CI pipeline including Iceberg + e2e tests |
+| `clean` | Remove `.venv`, `output/`, and Python caches |
+| `docker-down` | Stop and remove Docker containers |
 
 ---
 
@@ -202,9 +207,10 @@ dbt-duckdb-poc/
 ├── notebook.ipynb                   # Jupyter notebook — Iceberg analytics
 ├── docker-compose.yml               # MSSQL + LocalStack + Nessie services
 ├── .env.example                     # Environment variable template
-├── pyproject.toml                   # Project metadata + dependencies (uv/pip)
-├── pyproject.toml                   # Project metadata + pytest config
-├── Makefile
+├── run.ps1                          # Cross-platform build script (PowerShell 7+)
+├── pyproject.toml                   # Project metadata + dependencies (uv)
+├── demo.ipynb                       # Interactive demo notebook with talking points
+├── DEMO-SCRIPT.md                   # Demo presentation guide
 └── README.md
 ```
 

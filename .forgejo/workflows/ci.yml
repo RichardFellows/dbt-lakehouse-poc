@@ -43,6 +43,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install PowerShell
+        run: |
+          apt-get update && apt-get install -y wget apt-transport-https
+          . /etc/os-release
+          wget -q "https://packages.microsoft.com/config/ubuntu/$VERSION_ID/packages-microsoft-prod.deb" -O /tmp/packages-microsoft-prod.deb
+          dpkg -i /tmp/packages-microsoft-prod.deb
+          apt-get update && apt-get install -y powershell
+
       - name: Install ODBC Driver 18 for SQL Server
         run: |
           curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
@@ -70,7 +78,7 @@ jobs:
       - name: Create venv and install dependencies
         run: |
           $HOME/.local/bin/uv venv .venv
-          $HOME/.local/bin/uv pip install -e ".[test]"
+          $HOME/.local/bin/uv pip install -e ".[dev]"
 
       - name: Start LocalStack
         run: |
@@ -178,5 +186,8 @@ jobs:
           EOF
           sed -i 's/^[[:space:]]*//' .env
 
+      - name: Ensure S3 bucket
+        run: pwsh run.ps1 ensure-bucket
+
       - name: Run full CI pipeline (extract → transform → dbt test → Iceberg → e2e)
-        run: make ci-full
+        run: pwsh run.ps1 ci-full

@@ -1,28 +1,39 @@
 <#
 .SYNOPSIS
-    PowerShell equivalent of the Makefile for Windows environments.
+    Cross-platform build script for the dbt Lakehouse POC.
 .DESCRIPTION
-    Usage: .\run.ps1 <target>
-    Targets: setup, docker-up, nessie-wait, seed, extract, transform, test,
-             load-iceberg, notebook, all, ci, ci-full, test-e2e, clean, docker-down
+    Usage: pwsh run.ps1 <target>
+    Targets: setup, docker-up, nessie-wait, ensure-bucket, seed, extract, transform,
+             test, load-iceberg, notebook, all, ci, ci-full, test-e2e, clean, docker-down
 .EXAMPLE
-    .\run.ps1 all         # Full pipeline
-    .\run.ps1 transform   # Just run dbt
-    .\run.ps1 notebook    # Launch Jupyter
+    pwsh run.ps1 all         # Full pipeline
+    pwsh run.ps1 transform   # Just run dbt
+    pwsh run.ps1 notebook    # Launch Jupyter
 #>
 
 param(
     [Parameter(Position=0, Mandatory=$true)]
-    [ValidateSet("setup","docker-up","nessie-wait","seed","extract","transform",
-                 "test","load-iceberg","notebook","all","ci","ci-full","test-e2e",
-                 "clean","docker-down")]
+    [ValidateSet("setup","docker-up","nessie-wait","ensure-bucket","seed","extract",
+                 "transform","test","load-iceberg","notebook","all","ci","ci-full",
+                 "test-e2e","clean","docker-down")]
     [string]$Target
 )
 
 $ErrorActionPreference = "Stop"
 
+# ── Cross-platform paths ────────────────────────────────────────────────────
 $VENV = ".venv"
-$PYTHON = "$VENV\Scripts\python.exe"
+if ($IsWindows -or ($env:OS -eq "Windows_NT")) {
+    $PYTHON = Join-Path $VENV "Scripts/python.exe"
+    $DBT = Join-Path $VENV "Scripts/dbt.exe"
+    $PYTEST = Join-Path $VENV "Scripts/pytest.exe"
+    $AWSLOCAL = Join-Path $VENV "Scripts/awslocal.exe"
+} else {
+    $PYTHON = Join-Path $VENV "bin/python"
+    $DBT = Join-Path $VENV "bin/dbt"
+    $PYTEST = Join-Path $VENV "bin/pytest"
+    $AWSLOCAL = Join-Path $VENV "bin/awslocal"
+}
 $DBT_DIR = "dbt_project"
 
 # ── Helper: load .env file into environment ──────────────────────────────────
@@ -43,8 +54,8 @@ function Load-DotEnv {
 function Invoke-Setup {
     Write-Host "Creating virtual environment..."
     uv venv $VENV
-    uv pip install --python $PYTHON -e ".[test]"
-    Write-Host "✓ Environment ready. Activate with: .venv\Scripts\activate" -ForegroundColor Green
+    uv pip install --python $PYTHON -e ".[dev]"
+    Write-Host "✓ Environment ready (uv + pyproject.toml)" -ForegroundColor Green
 }
 
 function Invoke-DockerUp {
@@ -71,6 +82,37 @@ function Invoke-NessieWait {
     exit 1
 }
 
+function Invoke-EnsureBucket {
+    $s3Endpoint = if ($env:S3_ENDPOINT) { $env:S3_ENDPOINT } else { "http://localhost:4566" }
+    Write-Host "Ensuring S3 bucket 'lakehouse' exists on LocalStack ($s3Endpoint)..."
+
+    # Wait for LocalStack to be reachable
+    for ($i = 1; $i -le 20; $i++) {
+        try {
+            $null = Invoke-RestMethod "$s3Endpoint/_localstack/health" -TimeoutSec 3
+            break
+        } catch {
+            Write-Host "  attempt $i/20 - waiting for LocalStack..."
+            Start-Sleep -Seconds 2
+        }
+    }
+
+    # Create bucket (awslocal handles endpoint + credentials automatically)
+    $env:AWS_DEFAULT_REGION = if ($env:AWS_REGION) { $env:AWS_REGION } else { "us-east-1" }
+    try {
+        & $AWSLOCAL s3 mb s3://lakehouse 2>$null
+        Write-Host "✓ S3 bucket 'lakehouse' created." -ForegroundColor Green
+    } catch {
+        # Bucket may already exist — check
+        $buckets = & $AWSLOCAL s3 ls 2>$null
+        if ($buckets -match "lakehouse") {
+            Write-Host "✓ S3 bucket 'lakehouse' already exists." -ForegroundColor Green
+        } else {
+            Write-Error "Failed to create S3 bucket: $_"
+        }
+    }
+}
+
 function Invoke-Seed {
     Load-DotEnv
     $sa_password = $env:SA_PASSWORD
@@ -95,15 +137,17 @@ function Invoke-Seed {
 function Invoke-Extract {
     Load-DotEnv
     & $PYTHON extract.py
+    if ($LASTEXITCODE -ne 0) { throw "extract.py failed" }
     Write-Host "✓ Parquet files written to data/parquet/" -ForegroundColor Green
 }
 
 function Invoke-Transform {
     if (-not (Test-Path "output")) { New-Item -ItemType Directory "output" | Out-Null }
-    if (-not (Test-Path "data\parquet")) { New-Item -ItemType Directory "data\parquet" -Force | Out-Null }
+    if (-not (Test-Path "data/parquet")) { New-Item -ItemType Directory "data/parquet" -Force | Out-Null }
     Push-Location $DBT_DIR
     try {
-        & "..\$VENV\Scripts\dbt.exe" run --profiles-dir .
+        & "../$DBT" run --profiles-dir .
+        if ($LASTEXITCODE -ne 0) { throw "dbt run failed" }
         Write-Host "✓ dbt models materialised." -ForegroundColor Green
     } finally {
         Pop-Location
@@ -113,7 +157,8 @@ function Invoke-Transform {
 function Invoke-Test {
     Push-Location $DBT_DIR
     try {
-        & "..\$VENV\Scripts\dbt.exe" test --profiles-dir .
+        & "../$DBT" test --profiles-dir .
+        if ($LASTEXITCODE -ne 0) { throw "dbt test failed" }
         Write-Host "✓ dbt tests passed." -ForegroundColor Green
     } finally {
         Pop-Location
@@ -123,6 +168,7 @@ function Invoke-Test {
 function Invoke-LoadIceberg {
     Invoke-NessieWait
     & $PYTHON iceberg_output.py
+    if ($LASTEXITCODE -ne 0) { throw "iceberg_output.py failed" }
     Write-Host "✓ Iceberg tables written (catalogued in Nessie)" -ForegroundColor Green
 }
 
@@ -134,11 +180,12 @@ function Invoke-All {
     Invoke-Setup
     Invoke-DockerUp
     Invoke-NessieWait
+    Invoke-EnsureBucket
     Invoke-Seed
     Invoke-Extract
     Invoke-Transform
     Invoke-LoadIceberg
-    Write-Host "`n✓ Full pipeline complete. Run '.\run.ps1 notebook' to explore results." -ForegroundColor Green
+    Write-Host "`n✓ Full pipeline complete. Run 'pwsh run.ps1 notebook' to explore results." -ForegroundColor Green
 }
 
 function Invoke-CI {
@@ -149,7 +196,8 @@ function Invoke-CI {
 }
 
 function Invoke-TestE2E {
-    & "$VENV\Scripts\pytest.exe" tests/test_e2e.py -v --tb=short
+    & $PYTEST tests/test_e2e.py -v --tb=short
+    if ($LASTEXITCODE -ne 0) { throw "e2e tests failed" }
     Write-Host "✓ E2E test suite passed." -ForegroundColor Green
 }
 
@@ -165,9 +213,9 @@ function Invoke-CIFull {
 function Invoke-Clean {
     if (Test-Path $VENV) { Remove-Item -Recurse -Force $VENV }
     if (Test-Path "output") { Remove-Item -Recurse -Force "output" }
-    Get-ChildItem -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
-    Get-ChildItem -Recurse -Filter "*.pyc" | Remove-Item -Force
-    Get-ChildItem -Recurse -Directory -Filter ".ipynb_checkpoints" | Remove-Item -Recurse -Force
+    Get-ChildItem -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+    Get-ChildItem -Recurse -Filter "*.pyc" -ErrorAction SilentlyContinue | Remove-Item -Force
+    Get-ChildItem -Recurse -Directory -Filter ".ipynb_checkpoints" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
     Write-Host "✓ Clean complete." -ForegroundColor Green
 }
 
@@ -178,19 +226,20 @@ function Invoke-DockerDown {
 
 # ── Dispatch ─────────────────────────────────────────────────────────────────
 switch ($Target) {
-    "setup"         { Invoke-Setup }
-    "docker-up"     { Invoke-DockerUp }
-    "nessie-wait"   { Invoke-NessieWait }
-    "seed"          { Invoke-Seed }
-    "extract"       { Invoke-Extract }
-    "transform"     { Invoke-Transform }
-    "test"          { Invoke-Test }
-    "load-iceberg"  { Invoke-LoadIceberg }
-    "notebook"      { Invoke-Notebook }
-    "all"           { Invoke-All }
-    "ci"            { Invoke-CI }
-    "ci-full"       { Invoke-CIFull }
-    "test-e2e"      { Invoke-TestE2E }
-    "clean"         { Invoke-Clean }
-    "docker-down"   { Invoke-DockerDown }
+    "setup"          { Invoke-Setup }
+    "docker-up"      { Invoke-DockerUp }
+    "nessie-wait"    { Invoke-NessieWait }
+    "ensure-bucket"  { Invoke-EnsureBucket }
+    "seed"           { Invoke-Seed }
+    "extract"        { Invoke-Extract }
+    "transform"      { Invoke-Transform }
+    "test"           { Invoke-Test }
+    "load-iceberg"   { Invoke-LoadIceberg }
+    "notebook"       { Invoke-Notebook }
+    "all"            { Invoke-All }
+    "ci"             { Invoke-CI }
+    "ci-full"        { Invoke-CIFull }
+    "test-e2e"       { Invoke-TestE2E }
+    "clean"          { Invoke-Clean }
+    "docker-down"    { Invoke-DockerDown }
 }
