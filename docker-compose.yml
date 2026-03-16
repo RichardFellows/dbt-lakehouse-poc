@@ -61,6 +61,7 @@ services:
       - nessie.catalog.secrets.access-key.name=test
       - nessie.catalog.secrets.access-key.secret=test
       - nessie.server.authentication.enabled=false
+      - quarkus.management.port=9900
     healthcheck:
       test:
         - CMD-SHELL
