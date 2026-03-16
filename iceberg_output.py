@@ -120,6 +120,34 @@ def read_duckdb_table(db_path: Path, table_name: str) -> pa.Table:
         con.close()
 
 
+def _apply_s3_overrides(table) -> None:
+    """Override S3 endpoint on a table's IO if S3_ENDPOINT is set.
+
+    Nessie pushes the Docker-internal S3 endpoint (e.g. http://localstack:4566)
+    to PyIceberg via the REST catalog config. When running from the host,
+    we must patch the table's IO properties to use the host-accessible endpoint.
+    """
+    s3_endpoint = os.environ.get("S3_ENDPOINT")
+    if not s3_endpoint:
+        return
+
+    overrides = {
+        "s3.endpoint": s3_endpoint,
+        "s3.access-key-id": os.environ.get("AWS_ACCESS_KEY_ID", "test"),
+        "s3.secret-access-key": os.environ.get("AWS_SECRET_ACCESS_KEY", "test"),
+        "s3.region": os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+    }
+
+    # Patch the table's IO properties and reinitialise the IO
+    table.metadata_location  # ensure metadata loaded
+    io_props = dict(table.io.properties) if hasattr(table.io, "properties") else {}
+    io_props.update(overrides)
+
+    from pyiceberg.io import load_file_io
+
+    table._io = load_file_io(io_props, table.metadata.location)
+
+
 def write_iceberg_table(
     catalog: RestCatalog,
     table_name: str,
@@ -144,6 +172,7 @@ def write_iceberg_table(
         identifier,
         schema=arrow_table.schema,
     )
+    _apply_s3_overrides(iceberg_table)
     iceberg_table.overwrite(arrow_table)
     logger.debug("Wrote %d rows to '%s'", len(arrow_table), identifier)
 
@@ -159,6 +188,7 @@ def verify_iceberg_table(
     """
     identifier = f"{DEFAULT_NAMESPACE}.{table_name}"
     table = catalog.load_table(identifier)
+    _apply_s3_overrides(table)
     # Use to_arrow() to read the full table via the catalog's FileIO
     scan = table.scan()
     arrow_table = scan.to_arrow()
