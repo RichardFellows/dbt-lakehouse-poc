@@ -75,6 +75,22 @@ pwsh run.ps1 all
 pwsh run.ps1 notebook
 ```
 
+### Docker-only Quick Start (no host Python/ODBC needed)
+
+```bash
+# 1. Configure environment
+cp .env.example .env
+
+# 2. Start infrastructure + run full pipeline inside Docker
+docker compose up -d
+docker compose run --rm --profile pipeline pipeline pwsh run.ps1 all
+
+# 3. Launch Jupyter (from host, after pipeline completes)
+docker compose run --rm --profile pipeline -p 8888:8888 pipeline pwsh run.ps1 notebook
+```
+
+This runs everything inside a Docker container — no Python, uv, ODBC driver, or PowerShell needed on the host. Only Docker is required.
+
 ### What `pwsh run.ps1 all` does
 
 1. **setup** — creates a Python virtualenv via `uv` and installs all dependencies from `pyproject.toml`

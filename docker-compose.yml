@@ -43,10 +43,8 @@ services:
   nessie:
     image: ghcr.io/projectnessie/nessie:latest
     container_name: lakehouse-nessie
-    # Host network so Nessie uses localhost:4566 for S3, which is also
-    # reachable from PyIceberg on the host — avoids Docker-internal
-    # hostname mismatch (localstack:4566 vs localhost:4566).
-    network_mode: host
+    ports:
+      - "19120:19120"
     depends_on:
       localstack:
         condition: service_healthy
@@ -56,12 +54,11 @@ services:
       - nessie.catalog.warehouses.warehouse.location=s3://lakehouse/
       - nessie.catalog.service.s3.default-options.region=us-east-1
       - nessie.catalog.service.s3.default-options.path-style-access=true
-      - nessie.catalog.service.s3.default-options.endpoint=http://localhost:4566/
+      - nessie.catalog.service.s3.default-options.endpoint=http://localstack:4566/
       - nessie.catalog.service.s3.default-options.access-key=urn:nessie-secret:quarkus:nessie.catalog.secrets.access-key
       - nessie.catalog.secrets.access-key.name=test
       - nessie.catalog.secrets.access-key.secret=test
       - nessie.server.authentication.enabled=false
-      - quarkus.management.port=9900
     healthcheck:
       test:
         - CMD-SHELL
@@ -73,6 +70,36 @@ services:
       retries: 10
       start_period: 20s
     restart: unless-stopped
+
+  # ── Pipeline runner ──────────────────────────────────────────────────────
+  # Runs the full pipeline inside Docker, using container hostnames.
+  # Usage:
+  #   docker compose run --rm pipeline pwsh run.ps1 all
+  #   docker compose run --rm pipeline pwsh run.ps1 extract
+  #   docker compose run --rm pipeline pwsh run.ps1 notebook
+  pipeline:
+    build: .
+    container_name: lakehouse-pipeline
+    env_file: .env
+    volumes:
+      - .:/app
+    working_dir: /app
+    depends_on:
+      mssql:
+        condition: service_healthy
+      nessie:
+        condition: service_healthy
+    environment:
+      # Override hostnames to use Docker service names
+      - MSSQL_SERVER=mssql
+      - NESSIE_URL=http://nessie:19120
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      # No S3_ENDPOINT needed — Nessie pushes localstack:4566
+      # which is correct inside the Docker network
+    profiles:
+      - pipeline
 
 volumes:
   mssql_data:

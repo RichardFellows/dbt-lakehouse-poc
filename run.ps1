@@ -83,7 +83,10 @@ function Invoke-NessieWait {
 }
 
 function Invoke-EnsureBucket {
-    $s3Endpoint = if ($env:S3_ENDPOINT) { $env:S3_ENDPOINT } else { "http://localhost:4566" }
+    $inDocker = Test-Path "/.dockerenv"
+    $s3Endpoint = if ($env:S3_ENDPOINT) { $env:S3_ENDPOINT }
+                  elseif ($inDocker) { "http://localstack:4566" }
+                  else { "http://localhost:4566" }
     Write-Host "Ensuring S3 bucket 'lakehouse' exists on LocalStack ($s3Endpoint)..."
 
     # Wait for LocalStack to be reachable
@@ -97,14 +100,16 @@ function Invoke-EnsureBucket {
         }
     }
 
-    # Create bucket (awslocal handles endpoint + credentials automatically)
+    # Create bucket
     $env:AWS_DEFAULT_REGION = if ($env:AWS_REGION) { $env:AWS_REGION } else { "us-east-1" }
+    if (-not $env:AWS_ACCESS_KEY_ID) { $env:AWS_ACCESS_KEY_ID = "test" }
+    if (-not $env:AWS_SECRET_ACCESS_KEY) { $env:AWS_SECRET_ACCESS_KEY = "test" }
+
     try {
-        & $AWSLOCAL s3 mb s3://lakehouse 2>$null
+        & $AWSLOCAL --endpoint-url $s3Endpoint s3 mb s3://lakehouse 2>$null
         Write-Host "✓ S3 bucket 'lakehouse' created." -ForegroundColor Green
     } catch {
-        # Bucket may already exist — check
-        $buckets = & $AWSLOCAL s3 ls 2>$null
+        $buckets = & $AWSLOCAL --endpoint-url $s3Endpoint s3 ls 2>$null
         if ($buckets -match "lakehouse") {
             Write-Host "✓ S3 bucket 'lakehouse' already exists." -ForegroundColor Green
         } else {
@@ -116,21 +121,42 @@ function Invoke-EnsureBucket {
 function Invoke-Seed {
     Load-DotEnv
     $sa_password = $env:SA_PASSWORD
-    $container = "lakehouse-mssql"
+    $mssqlServer = if ($env:MSSQL_SERVER) { $env:MSSQL_SERVER } else { "localhost" }
+    $mssqlPort = if ($env:MSSQL_PORT) { $env:MSSQL_PORT } else { "1433" }
+    $inDocker = Test-Path "/.dockerenv"
 
-    Write-Host "Waiting for MSSQL to be healthy..."
-    for ($i = 1; $i -le 30; $i++) {
-        $health = docker inspect --format='{{.State.Health.Status}}' $container 2>$null
-        if ($health -eq "healthy") {
-            Write-Host "  MSSQL is healthy."
-            break
+    if ($inDocker) {
+        # Running inside Docker — use sqlcmd directly against the MSSQL service
+        Write-Host "Waiting for MSSQL at ${mssqlServer}:${mssqlPort}..."
+        for ($i = 1; $i -le 30; $i++) {
+            try {
+                $result = & /opt/mssql-tools18/bin/sqlcmd -S "$mssqlServer,$mssqlPort" -U SA -P $sa_password -No -Q "SELECT 1" 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "  MSSQL is ready."
+                    break
+                }
+            } catch {}
+            Write-Host "  attempt $i/30 - retrying in 2s..."
+            Start-Sleep -Seconds 2
         }
-        Write-Host "  attempt $i/30 - waiting for MSSQL ($health)..."
-        Start-Sleep -Seconds 2
+        Write-Host "Seeding database..."
+        & /opt/mssql-tools18/bin/sqlcmd -S "$mssqlServer,$mssqlPort" -U SA -P $sa_password -No -i scripts/init-db.sql
+    } else {
+        # Running on host — use docker exec
+        $container = "lakehouse-mssql"
+        Write-Host "Waiting for MSSQL to be healthy..."
+        for ($i = 1; $i -le 30; $i++) {
+            $health = docker inspect --format='{{.State.Health.Status}}' $container 2>$null
+            if ($health -eq "healthy") {
+                Write-Host "  MSSQL is healthy."
+                break
+            }
+            Write-Host "  attempt $i/30 - waiting for MSSQL ($health)..."
+            Start-Sleep -Seconds 2
+        }
+        Write-Host "Seeding database..."
+        docker exec $container /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P $sa_password -No -i /scripts/init-db.sql
     }
-
-    Write-Host "Seeding database..."
-    docker exec $container /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P $sa_password -No -i /scripts/init-db.sql
     Write-Host "✓ Database seeded." -ForegroundColor Green
 }
 
@@ -177,15 +203,21 @@ function Invoke-Notebook {
 }
 
 function Invoke-All {
-    Invoke-Setup
-    Invoke-DockerUp
+    $inDocker = Test-Path "/.dockerenv"
+    if (-not $inDocker) {
+        Invoke-Setup
+        Invoke-DockerUp
+    }
     Invoke-NessieWait
     Invoke-EnsureBucket
     Invoke-Seed
     Invoke-Extract
     Invoke-Transform
     Invoke-LoadIceberg
-    Write-Host "`n✓ Full pipeline complete. Run 'pwsh run.ps1 notebook' to explore results." -ForegroundColor Green
+    Write-Host "`n✓ Full pipeline complete." -ForegroundColor Green
+    if (-not $inDocker) {
+        Write-Host "Run 'pwsh run.ps1 notebook' to explore results."
+    }
 }
 
 function Invoke-CI {
