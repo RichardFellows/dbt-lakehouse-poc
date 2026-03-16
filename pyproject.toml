@@ -13,7 +13,7 @@ dependencies = [
     "pandas>=2.0.0",
     "pyarrow>=14.0.0",
     "pyodbc>=5.0.0",
-    "pyiceberg[rest,s3fs]==0.10.0",
+    "pyiceberg[s3fs]==0.10.0",
     "jupyter>=1.0.0",
     "nbconvert>=7.0.0",
     "sqlalchemy>=2.0.0",
@@ -24,6 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "awscli>=1.36",
     "awscli-local>=0.22",
     "pytest>=8.0.0",
 ]
