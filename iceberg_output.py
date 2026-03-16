@@ -69,17 +69,27 @@ def setup_catalog(nessie_url: str, warehouse: str) -> RestCatalog:
     For local dev (Docker Compose), Nessie + LocalStack run together and
     ``warehouse`` defaults to the Nessie-configured name.
     """
-    catalog = RestCatalog(
-        "lakehouse",
-        **{
-            "uri": f"{nessie_url.rstrip('/')}/iceberg",
-            # Must match a warehouse name configured in Nessie server.
-            "warehouse": warehouse,
-            # Nessie maps each Iceberg REST "prefix" to a branch;
-            # "main" is the default branch name.
-            "prefix": "main",
-        },
-    )
+    catalog_props = {
+        "uri": f"{nessie_url.rstrip('/')}/iceberg",
+        # Must match a warehouse name configured in Nessie server.
+        "warehouse": warehouse,
+        # Nessie maps each Iceberg REST "prefix" to a branch;
+        # "main" is the default branch name.
+        "prefix": "main",
+    }
+
+    # Allow overriding S3 endpoint for host-side access to LocalStack.
+    # Nessie pushes the Docker-internal hostname (e.g. http://localstack:4566)
+    # which isn't reachable from the host. Set S3_ENDPOINT=http://localhost:4566
+    # when running outside Docker.
+    s3_endpoint = os.environ.get("S3_ENDPOINT")
+    if s3_endpoint:
+        catalog_props["s3.endpoint"] = s3_endpoint
+        catalog_props["s3.access-key-id"] = os.environ.get("AWS_ACCESS_KEY_ID", "test")
+        catalog_props["s3.secret-access-key"] = os.environ.get("AWS_SECRET_ACCESS_KEY", "test")
+        catalog_props["s3.region"] = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+
+    catalog = RestCatalog("lakehouse", **catalog_props)
 
     try:
         catalog.create_namespace(DEFAULT_NAMESPACE)
